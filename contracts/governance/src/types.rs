@@ -2,6 +2,13 @@ use soroban_sdk::{String, contracterror, contracttype};
 
 pub const ABSTAIN_VOTING_POWER: i32 = 0;
 
+/// Identifier of a voter: the token id of its Stellar Membership.
+///
+/// The membership contract assigns token ids sequentially at mint and keeps
+/// them across key rotations and recoveries, so voting history and voting
+/// power follow the person rather than the key.
+pub type MemberId = u32;
+
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SubmissionCategory {
