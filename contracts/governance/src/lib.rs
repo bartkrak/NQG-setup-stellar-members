@@ -20,11 +20,12 @@ use crate::neural_governance::traits::Governance;
 use crate::neural_governance::{Layer, NGQ, Neuron, aggregate_result};
 use crate::storage::{
     LayerKeyData, NeuronKeyData, NeuronResultKeyData, SubmissionVotesKeyData, SubmissionsKeyData,
-    TallyResultsKeyData, VotingPowersKeyData, read_layer, read_neural_governance, read_neuron,
-    read_neuron_result, read_submission_votes, read_submissions, read_tally_results,
-    read_voting_powers, remove_layer, remove_neuron, write_layer, write_neural_governance,
-    write_neuron, write_neuron_result, write_submission_votes, write_submissions,
-    write_tally_results, write_voting_powers,
+    TallyResultsKeyData, VotingPowersKeyData, read_layer, read_membership_contract,
+    read_neural_governance, read_neuron, read_neuron_result, read_submission_votes,
+    read_submissions, read_tally_results, read_voting_powers, remove_layer, remove_neuron,
+    write_layer, write_membership_contract, write_neural_governance, write_neuron,
+    write_neuron_result, write_submission_votes, write_submissions, write_tally_results,
+    write_voting_powers,
 };
 use crate::types::{ABSTAIN_VOTING_POWER, MemberId, Vote, VotingSystemError};
 
@@ -61,6 +62,9 @@ pub enum DataKey {
     Admin,
     /// u32
     CurrentRound,
+    /// storage type: instance
+    /// Address of the Stellar Membership contract whose token ids identify voters
+    MembershipContract,
     NeuronKey(NeuronKeyData),
     NeuronResultKey(NeuronResultKeyData),
     LayerKey(LayerKeyData),
@@ -73,8 +77,20 @@ pub enum DataKey {
 #[contractimpl]
 impl VotingSystem {
     /// Initialize the governance contract.
-    pub fn __constructor(env: Env, admin: Address, current_round: u32) {
+    ///
+    /// # Arguments
+    ///
+    /// * `admin`: account allowed to configure the contract and upload voting data.
+    /// * `current_round`: the active voting round.
+    /// * `membership_contract`: Stellar Membership contract whose token ids identify voters.
+    pub fn __constructor(
+        env: Env,
+        admin: Address,
+        current_round: u32,
+        membership_contract: Address,
+    ) {
         set_admin(&env, &admin);
+        write_membership_contract(&env, &membership_contract);
 
         let neural_governance = NGQ::new(&env);
         env.storage()
@@ -96,6 +112,18 @@ impl VotingSystem {
         require_admin(&env);
 
         env.storage().instance().set(&DataKey::CurrentRound, &round);
+    }
+
+    /// Get the Stellar Membership contract whose token ids identify voters.
+    pub fn get_membership_contract(env: &Env) -> Address {
+        read_membership_contract(env)
+    }
+
+    /// Change the Stellar Membership contract. Admin only.
+    pub fn set_membership_contract(env: Env, membership_contract: Address) {
+        require_admin(&env);
+
+        write_membership_contract(&env, &membership_contract);
     }
 
     /// Set multiple submissions.

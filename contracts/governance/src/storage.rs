@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, I256, Map, String, Vec};
+use soroban_sdk::{Address, Env, I256, Map, String, Vec};
 
 use crate::neural_governance::{Layer, NGQ, Neuron};
 use crate::storage::key_data::{
@@ -125,6 +125,20 @@ pub(crate) fn write_neural_governance(env: &Env, neural_governance: NGQ) {
     env.storage()
         .instance()
         .set(&DataKey::NeuralGovernance, &neural_governance);
+}
+
+/// Set by the constructor, so always present.
+pub(crate) fn read_membership_contract(env: &Env) -> Address {
+    env.storage()
+        .instance()
+        .get(&DataKey::MembershipContract)
+        .unwrap()
+}
+
+pub(crate) fn write_membership_contract(env: &Env, membership_contract: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MembershipContract, membership_contract);
 }
 
 pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<MemberId, I256>> {
