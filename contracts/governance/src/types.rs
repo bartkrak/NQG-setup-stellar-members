@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, String};
+use soroban_sdk::{String, contracterror, contracttype};
 
 pub const ABSTAIN_VOTING_POWER: i32 = 0;
 

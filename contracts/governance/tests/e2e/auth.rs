@@ -1,7 +1,7 @@
 use soroban_sdk::testutils::{
     Address as AddressTrait, AuthorizedFunction, AuthorizedInvocation, MockAuth, MockAuthInvoke,
 };
-use soroban_sdk::{vec, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{Address, Env, IntoVal, Symbol, vec};
 
 use crate::e2e::common::contract_utils::deploy_contract;
 

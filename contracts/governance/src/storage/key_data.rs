@@ -1,5 +1,5 @@
 use crate::DataKey;
-use soroban_sdk::{contracttype, String};
+use soroban_sdk::{String, contracttype};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]

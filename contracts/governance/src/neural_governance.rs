@@ -2,7 +2,7 @@
 use crate::fixed_mul_floor::fixed_mul_floor;
 
 // use soroban_fixed_point_math::SorobanFixedPoint;
-use soroban_sdk::{contracttype, Address, Env, Map, String, Vec, I256};
+use soroban_sdk::{Address, Env, I256, Map, String, Vec, contracttype};
 
 pub mod traits;
 

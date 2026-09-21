@@ -1,7 +1,7 @@
-use soroban_sdk::{vec, Env, String, Vec, I256};
+use soroban_sdk::{Env, I256, String, Vec, vec};
 
-use governance::types::VotingSystemError;
 use governance::LayerAggregator;
+use governance::types::VotingSystemError;
 
 use crate::e2e::common::contract_utils::deploy_contract;
 

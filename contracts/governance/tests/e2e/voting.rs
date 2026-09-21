@@ -1,10 +1,11 @@
 use soroban_sdk::{
+    Address, Env, I256, IntoVal, Map, String, Vec,
     testutils::{Address as _, MockAuth, MockAuthInvoke},
-    vec, Address, Env, IntoVal, Map, String, Vec, I256,
+    vec,
 };
 
 use governance::types::{Vote, VotingSystemError};
-use governance::{LayerAggregator, DECIMALS};
+use governance::{DECIMALS, LayerAggregator};
 
 use crate::e2e::common::contract_utils::deploy_contract;
 
@@ -325,10 +326,12 @@ fn set_bump_round_flow() {
     );
 
     // Verify submission is active
-    assert!(contract_client
-        .get_submissions()
-        .iter()
-        .any(|(name, _category)| name == submission));
+    assert!(
+        contract_client
+            .get_submissions()
+            .iter()
+            .any(|(name, _category)| name == submission)
+    );
 
     // Bump the round
     contract_client.set_current_round(&26);
@@ -381,14 +384,18 @@ fn set_bump_round_flow() {
     );
 
     // Verify new submission is active and old is not
-    assert!(contract_client
-        .get_submissions()
-        .iter()
-        .any(|(name, _category)| name == new_submission));
-    assert!(!contract_client
-        .get_submissions()
-        .iter()
-        .any(|(name, _category)| name == submission));
+    assert!(
+        contract_client
+            .get_submissions()
+            .iter()
+            .any(|(name, _category)| name == new_submission)
+    );
+    assert!(
+        !contract_client
+            .get_submissions()
+            .iter()
+            .any(|(name, _category)| name == submission)
+    );
 
     // Verify historical results are still accessible
     assert_eq!(

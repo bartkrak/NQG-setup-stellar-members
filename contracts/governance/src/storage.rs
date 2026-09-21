@@ -1,6 +1,6 @@
-use soroban_sdk::{Address, Env, Map, String, Vec, I256};
+use soroban_sdk::{Address, Env, I256, Map, String, Vec};
 
-use crate::neural_governance::{Layer, Neuron, NGQ};
+use crate::neural_governance::{Layer, NGQ, Neuron};
 use crate::storage::key_data::{
     get_layer_key, get_neuron_key, get_neuron_result_key, get_submission_votes_key,
     get_submissions_key, get_tally_results_key, get_voting_powers_key,
