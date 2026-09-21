@@ -7,25 +7,26 @@ use crate::fixed_mul_floor::fixed_mul_floor;
 use alloc::string::ToString;
 // use soroban_fixed_point_math::SorobanFixedPoint;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, vec, Address, BytesN, Env, Map, String, Vec, I256,
+    Address, BytesN, ContractExecutable, Env, I256, Map, String, Vec, contract, contractimpl,
+    contracttype, vec,
 };
 
 use admin::require_admin;
 
 use crate::admin::set_admin;
 use crate::admin::traits::Admin;
-use crate::neural_governance::traits::Governance;
 pub use crate::neural_governance::LayerAggregator;
-use crate::neural_governance::{aggregate_result, Layer, Neuron, NGQ};
+use crate::neural_governance::traits::Governance;
+use crate::neural_governance::{Layer, NGQ, Neuron, aggregate_result};
 use crate::storage::{
-    read_layer, read_neural_governance, read_neuron, read_neuron_result, read_submission_votes,
-    read_submissions, read_tally_results, read_voting_powers, remove_layer, remove_neuron,
-    write_layer, write_neural_governance, write_neuron, write_neuron_result,
-    write_submission_votes, write_submissions, write_tally_results, write_voting_powers,
     LayerKeyData, NeuronKeyData, NeuronResultKeyData, SubmissionVotesKeyData, SubmissionsKeyData,
-    TallyResultsKeyData, VotingPowersKeyData,
+    TallyResultsKeyData, VotingPowersKeyData, read_layer, read_neural_governance, read_neuron,
+    read_neuron_result, read_submission_votes, read_submissions, read_tally_results,
+    read_voting_powers, remove_layer, remove_neuron, write_layer, write_neural_governance,
+    write_neuron, write_neuron_result, write_submission_votes, write_submissions,
+    write_tally_results, write_voting_powers,
 };
-use crate::types::{Vote, VotingSystemError, ABSTAIN_VOTING_POWER};
+use crate::types::{ABSTAIN_VOTING_POWER, Vote, VotingSystemError};
 
 mod admin;
 mod fixed_mul_floor;
@@ -49,7 +50,7 @@ pub enum DataKey {
     /// Map<String, ()>
     Submissions(SubmissionsKeyData),
     /// storage type: instance
-    /// Map<user_id, Vec<user_id>> - users to the vector of users they delegated their votes to
+    /// `Map<user_id, Vec<user_id>>` - users to the vector of users they delegated their votes to
     Delegatees,
     // storage type: instance
     // Map<UserUUID, u32> - users to their delegation rank
@@ -190,7 +191,7 @@ impl VotingSystem {
                         submission_voting_power_minus.add(&voting_power);
                 }
                 Vote::Abstain => (),
-            };
+            }
         }
         let tally_result: I256 = submission_voting_power_plus.sub(&submission_voting_power_minus);
         let mut tally_results: Map<String, I256> =
@@ -235,7 +236,8 @@ impl Admin for VotingSystem {
     fn upgrade(env: Env, wasm_hash: BytesN<32>) {
         require_admin(&env);
 
-        env.deployer().update_current_contract_wasm(wasm_hash);
+        env.deployer()
+            .update_current_contract(ContractExecutable::Wasm(wasm_hash));
     }
 }
 

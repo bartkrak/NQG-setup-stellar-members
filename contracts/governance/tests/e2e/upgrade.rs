@@ -1,5 +1,5 @@
 use crate::e2e::common::contract_utils::deploy_contract;
-use soroban_sdk::{testutils::Address as _, Address, Env, Map, String, I256};
+use soroban_sdk::{Address, Env, I256, Map, String, testutils::Address as _};
 
 mod mock_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/mocks.wasm");

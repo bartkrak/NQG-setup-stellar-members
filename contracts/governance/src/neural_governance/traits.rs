@@ -1,6 +1,6 @@
-use crate::neural_governance::{Layer, LayerAggregator, Neuron, NGQ};
+use crate::neural_governance::{Layer, LayerAggregator, NGQ, Neuron};
 use crate::types::VotingSystemError;
-use soroban_sdk::{Address, Env, Map, String, Vec, I256};
+use soroban_sdk::{Address, Env, I256, Map, String, Vec};
 
 pub trait Governance {
     /// Add a new layer to the contract.
