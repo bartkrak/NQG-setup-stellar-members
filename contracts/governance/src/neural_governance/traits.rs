@@ -48,12 +48,15 @@ pub trait Governance {
     ) -> Result<Map<MemberId, I256>, VotingSystemError>;
 
     /// Set neuron result for the active round.
+    ///
+    /// Every key must be an active member of the Stellar Membership contract:
+    /// `NotAMember` otherwise, and nothing is written.
     fn set_neuron_result(
         env: Env,
         layer_id: String,
         neuron_id: String,
         result: Map<MemberId, I256>,
-    );
+    ) -> Result<(), VotingSystemError>;
 
     /// Get a map of member ids and their voting powers for a layer for the active round.
     fn get_layer_result(

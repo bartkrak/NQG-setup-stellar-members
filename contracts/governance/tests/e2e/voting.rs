@@ -603,7 +603,7 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
     // Same user count per layer but different users must be rejected too
     let mut layer1_result = Map::new(&env);
     layer1_result.set(user_positive, I256::from_i128(&env, 300));
-    layer1_result.set(99, I256::from_i128(&env, 300));
+    layer1_result.set(3, I256::from_i128(&env, 300));
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     assert_eq!(

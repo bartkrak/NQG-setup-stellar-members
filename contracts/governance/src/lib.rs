@@ -15,6 +15,7 @@ use admin::require_admin;
 
 use crate::admin::set_admin;
 use crate::admin::traits::Admin;
+use crate::membership::require_members;
 pub use crate::neural_governance::LayerAggregator;
 use crate::neural_governance::traits::Governance;
 use crate::neural_governance::{Layer, NGQ, Neuron, aggregate_result};
@@ -31,6 +32,7 @@ use crate::types::{ABSTAIN_VOTING_POWER, MemberId, Vote, VotingSystemError};
 
 mod admin;
 mod fixed_mul_floor;
+mod membership;
 mod neural_governance;
 mod storage;
 pub mod types;
@@ -120,6 +122,10 @@ impl VotingSystem {
     }
 
     /// Change the Stellar Membership contract. Admin only.
+    ///
+    /// Voters are validated against it on every upload, so a wrong address
+    /// makes every upload fail with `NotAMember` rather than letting unknown
+    /// ids through.
     pub fn set_membership_contract(env: Env, membership_contract: Address) {
         require_admin(&env);
 
@@ -153,6 +159,9 @@ impl VotingSystem {
     }
 
     /// Set votes for a submission.
+    ///
+    /// Every voter must be an active member of the Stellar Membership contract:
+    /// `NotAMember` otherwise, and nothing is written.
     pub fn set_votes_for_submission(
         env: &Env,
         submission_id: String,
@@ -166,6 +175,7 @@ impl VotingSystem {
         {
             return Err(VotingSystemError::SubmissionDoesNotExist);
         }
+        require_members(env, &votes)?;
 
         // this causes timeout god knows why
         write_submission_votes(env, &submission_id, Self::get_current_round(env), &votes);
@@ -349,8 +359,9 @@ impl Governance for VotingSystem {
         layer_id: String,
         neuron_id: String,
         result: Map<MemberId, I256>,
-    ) {
+    ) -> Result<(), VotingSystemError> {
         require_admin(&env);
+        require_members(&env, &result)?;
 
         write_neuron_result(
             &env,
@@ -359,6 +370,7 @@ impl Governance for VotingSystem {
             Self::get_current_round(&env),
             &result,
         );
+        Ok(())
     }
 
     /// Get a result of a whole layer

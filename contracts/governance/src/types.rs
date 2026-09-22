@@ -61,4 +61,6 @@ pub enum VotingSystemError {
     VotingPowersNotSet = 15,
     TallyResultsNotSet = 16,
     LayerResultsUsersMismatch = 17,
+    /// A voter id is not an active Stellar Membership token.
+    NotAMember = 18,
 }
