@@ -5,7 +5,7 @@ use crate::storage::key_data::{
     get_layer_key, get_neuron_key, get_neuron_result_key, get_submission_votes_key,
     get_submissions_key, get_tally_results_key, get_voting_powers_key,
 };
-use crate::types::{Vote, VotingSystemError};
+use crate::types::{MemberId, Vote, VotingSystemError};
 use crate::{ContractResult, DataKey};
 
 pub use crate::storage::key_data::{
@@ -60,7 +60,7 @@ pub(crate) fn read_neuron_result(
     layer_id: &String,
     neuron_id: &String,
     round: u32,
-) -> ContractResult<Map<Address, I256>> {
+) -> ContractResult<Map<MemberId, I256>> {
     let key = get_neuron_result_key(layer_id, neuron_id, round);
     env.storage()
         .temporary()
@@ -73,7 +73,7 @@ pub(crate) fn write_neuron_result(
     layer_id: &String,
     neuron_id: &String,
     round: u32,
-    result: &Map<Address, I256>,
+    result: &Map<MemberId, I256>,
 ) {
     let key = get_neuron_result_key(layer_id, neuron_id, round);
     env.storage().temporary().set(&key, result);
@@ -83,7 +83,7 @@ pub(crate) fn read_submission_votes(
     env: &Env,
     submission_id: &String,
     round: u32,
-) -> ContractResult<Map<Address, Vote>> {
+) -> ContractResult<Map<MemberId, Vote>> {
     let key = get_submission_votes_key(submission_id, round);
     env.storage()
         .persistent()
@@ -95,7 +95,7 @@ pub(crate) fn write_submission_votes(
     env: &Env,
     submission_id: &String,
     round: u32,
-    votes: &Map<Address, Vote>,
+    votes: &Map<MemberId, Vote>,
 ) {
     let key = get_submission_votes_key(submission_id, round);
     env.storage().persistent().set(&key, votes);
@@ -127,7 +127,21 @@ pub(crate) fn write_neural_governance(env: &Env, neural_governance: NGQ) {
         .set(&DataKey::NeuralGovernance, &neural_governance);
 }
 
-pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<Address, I256>> {
+/// Set by the constructor, so always present.
+pub(crate) fn read_membership_contract(env: &Env) -> Address {
+    env.storage()
+        .instance()
+        .get(&DataKey::MembershipContract)
+        .unwrap()
+}
+
+pub(crate) fn write_membership_contract(env: &Env, membership_contract: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MembershipContract, membership_contract);
+}
+
+pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<MemberId, I256>> {
     let key = get_voting_powers_key(round);
     env.storage()
         .persistent()
@@ -135,7 +149,7 @@ pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<Ad
         .ok_or(VotingSystemError::VotingPowersNotSet)
 }
 
-pub(crate) fn write_voting_powers(env: &Env, round: u32, voting_powers: &Map<Address, I256>) {
+pub(crate) fn write_voting_powers(env: &Env, round: u32, voting_powers: &Map<MemberId, I256>) {
     let key = get_voting_powers_key(round);
     env.storage().persistent().set(&key, voting_powers);
 }
