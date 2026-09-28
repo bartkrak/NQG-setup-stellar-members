@@ -9,13 +9,15 @@ Currently, because
 of [resource constraints](https://developers.stellar.org/docs/reference/resource-limits-fees#resource-limits) and to
 preserve voter privacy, neurons are computed off-chain and uploaded to the contract.
 
-The contract adds up results of each layer and computers the final voting power for each voter. This voting power is
-stored on-chain for future reference.
+The contract adds up results of each layer and computes the final voting power (NQG score) for each voter. This voting
+power is stored on-chain per round for future reference.
 
-This voting power is used to compute the final score for each submission: Each `Yes` and `No` vote is multiplied by
-respective users voting powers and tallied.
+Voters are identified by their Stellar Membership token id
+(`u32`), which stays the same across key rotations and recoveries. Every uploaded neuron result is checked against the
+membership contract, and ids that are not active members are rejected.
 
-Contract is also a part of Soroban Governor DAO system. Voting powers of users are used as SCF Token balances (votes), which are then used to vote on proposals in the DAO.
+The contract only computes NQG. It does not count votes: other contracts and apps read the scores through
+`get_voting_power_for_id(member_id)` or `get_voting_powers()`.
 
 ## Release 
 

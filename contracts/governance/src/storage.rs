@@ -1,16 +1,14 @@
-use soroban_sdk::{Address, Env, I256, Map, String, Vec};
+use soroban_sdk::{Address, Env, I256, Map, String};
 
 use crate::neural_governance::{Layer, NGQ, Neuron};
 use crate::storage::key_data::{
-    get_layer_key, get_neuron_key, get_neuron_result_key, get_submission_votes_key,
-    get_submissions_key, get_tally_results_key, get_voting_powers_key,
+    get_layer_key, get_neuron_key, get_neuron_result_key, get_voting_powers_key,
 };
-use crate::types::{MemberId, Vote, VotingSystemError};
+use crate::types::VotingSystemError;
 use crate::{ContractResult, DataKey};
 
 pub use crate::storage::key_data::{
-    LayerKeyData, NeuronKeyData, NeuronResultKeyData, SubmissionVotesKeyData, SubmissionsKeyData,
-    TallyResultsKeyData, VotingPowersKeyData,
+    LayerKeyData, NeuronKeyData, NeuronResultKeyData, VotingPowersKeyData,
 };
 
 mod key_data;
@@ -60,7 +58,7 @@ pub(crate) fn read_neuron_result(
     layer_id: &String,
     neuron_id: &String,
     round: u32,
-) -> ContractResult<Map<MemberId, I256>> {
+) -> ContractResult<Map<u32, I256>> {
     let key = get_neuron_result_key(layer_id, neuron_id, round);
     env.storage()
         .temporary()
@@ -73,45 +71,10 @@ pub(crate) fn write_neuron_result(
     layer_id: &String,
     neuron_id: &String,
     round: u32,
-    result: &Map<MemberId, I256>,
+    result: &Map<u32, I256>,
 ) {
     let key = get_neuron_result_key(layer_id, neuron_id, round);
     env.storage().temporary().set(&key, result);
-}
-
-pub(crate) fn read_submission_votes(
-    env: &Env,
-    submission_id: &String,
-    round: u32,
-) -> ContractResult<Map<MemberId, Vote>> {
-    let key = get_submission_votes_key(submission_id, round);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .ok_or(VotingSystemError::VotesForSubmissionNotSet)
-}
-
-pub(crate) fn write_submission_votes(
-    env: &Env,
-    submission_id: &String,
-    round: u32,
-    votes: &Map<MemberId, Vote>,
-) {
-    let key = get_submission_votes_key(submission_id, round);
-    env.storage().persistent().set(&key, votes);
-}
-
-pub(crate) fn read_submissions(env: &Env, round: u32) -> Vec<(String, String)> {
-    let key = get_submissions_key(round);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or_else(|| Vec::new(env))
-}
-
-pub(crate) fn write_submissions(env: &Env, round: u32, submissions: &Vec<(String, String)>) {
-    let key = get_submissions_key(round);
-    env.storage().persistent().set(&key, submissions);
 }
 
 pub(crate) fn read_neural_governance(env: &Env) -> ContractResult<NGQ> {
@@ -141,7 +104,7 @@ pub(crate) fn write_membership_contract(env: &Env, membership_contract: &Address
         .set(&DataKey::MembershipContract, membership_contract);
 }
 
-pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<MemberId, I256>> {
+pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<u32, I256>> {
     let key = get_voting_powers_key(round);
     env.storage()
         .persistent()
@@ -149,26 +112,7 @@ pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<Me
         .ok_or(VotingSystemError::VotingPowersNotSet)
 }
 
-pub(crate) fn write_voting_powers(env: &Env, round: u32, voting_powers: &Map<MemberId, I256>) {
+pub(crate) fn write_voting_powers(env: &Env, round: u32, voting_powers: &Map<u32, I256>) {
     let key = get_voting_powers_key(round);
     env.storage().persistent().set(&key, voting_powers);
-}
-
-pub(crate) fn read_tally_results(env: &Env, round: u32) -> ContractResult<Map<String, I256>> {
-    let key = get_tally_results_key(round);
-    env.storage()
-        .persistent()
-        .get(&key)
-        .ok_or(VotingSystemError::TallyResultsNotSet)
-}
-
-pub(crate) fn write_tally_results(
-    env: &Env,
-    round: u32,
-    submissions_tally_results: &Map<String, I256>,
-) {
-    let key = get_tally_results_key(round);
-    env.storage()
-        .persistent()
-        .set(&key, submissions_tally_results);
 }

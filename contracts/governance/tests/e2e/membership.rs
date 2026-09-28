@@ -1,7 +1,7 @@
 use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
 use soroban_sdk::{Address, Env, I256, IntoVal, Map, String, vec};
 
-use governance::types::{Vote, VotingSystemError};
+use governance::types::VotingSystemError;
 use governance::{VotingSystem, VotingSystemClient};
 
 use crate::e2e::common::contract_utils::{MEMBERS, deploy_contract};
@@ -99,45 +99,6 @@ fn neuron_results_take_only_active_members() {
         );
         assert_eq!(
             contract_client.get_neuron_result(&layer0, &neuron0),
-            accepted
-        );
-    }
-}
-
-#[test]
-fn votes_take_only_active_members() {
-    let env = Env::default();
-    let (contract_client, _admin) = deploy_contract(&env);
-    env.mock_all_auths();
-    let submission = String::from_str(&env, "sub1");
-    contract_client.set_submissions(&vec![
-        &env,
-        (submission.clone(), String::from_str(&env, "Applications")),
-    ]);
-    let newcomer = revoke_and_mint(&env, &contract_client);
-
-    let mut accepted = Map::new(&env);
-    accepted.set(1, Vote::Yes);
-    accepted.set(newcomer, Vote::No);
-    contract_client.set_votes_for_submission(&submission, &accepted);
-    assert_eq!(
-        contract_client.get_votes_for_submission(&submission),
-        accepted
-    );
-
-    for rejected_id in [2, 42] {
-        let mut rejected = Map::new(&env);
-        rejected.set(1, Vote::No);
-        rejected.set(rejected_id, Vote::Yes);
-        assert_eq!(
-            contract_client
-                .try_set_votes_for_submission(&submission, &rejected)
-                .unwrap_err()
-                .unwrap(),
-            VotingSystemError::NotAMember
-        );
-        assert_eq!(
-            contract_client.get_votes_for_submission(&submission),
             accepted
         );
     }

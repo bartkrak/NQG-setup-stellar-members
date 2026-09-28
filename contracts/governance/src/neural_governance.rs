@@ -1,6 +1,5 @@
 #![allow(non_upper_case_globals)]
 use crate::fixed_mul_floor::fixed_mul_floor;
-use crate::types::MemberId;
 
 // use soroban_fixed_point_math::SorobanFixedPoint;
 use soroban_sdk::{Env, I256, Map, String, Vec, contracttype};
@@ -65,10 +64,10 @@ impl NGQ {
 
 pub(crate) fn aggregate_result(
     env: &Env,
-    result: Map<MemberId, Vec<I256>>,
+    result: Map<u32, Vec<I256>>,
     layer_aggregator: LayerAggregator,
     decimals: I256,
-) -> Map<MemberId, I256> {
+) -> Map<u32, I256> {
     let mut aggregated_result = Map::new(env);
     for (user, res) in result {
         let res = match layer_aggregator {
@@ -128,9 +127,9 @@ mod tests {
     fn aggregate_empty() {
         let env = Env::default();
 
-        let user1: MemberId = 1;
+        let user1: u32 = 1;
 
-        let mut result: Map<MemberId, Vec<I256>> = Map::new(&env);
+        let mut result: Map<u32, Vec<I256>> = Map::new(&env);
         result.set(user1, vec![&env]);
 
         let aggregated = aggregate_result(
@@ -146,10 +145,10 @@ mod tests {
     fn aggregate_sum() {
         let env = Env::default();
 
-        let user1: MemberId = 1;
-        let user2: MemberId = 2;
+        let user1: u32 = 1;
+        let user2: u32 = 2;
 
-        let mut result: Map<MemberId, Vec<I256>> = Map::new(&env);
+        let mut result: Map<u32, Vec<I256>> = Map::new(&env);
         result.set(
             user1,
             vec![&env, I256::from_i128(&env, 1), I256::from_i128(&env, 2)],
@@ -169,10 +168,10 @@ mod tests {
     fn aggregate_product() {
         let env = Env::default();
 
-        let user1: MemberId = 1;
-        let user2: MemberId = 2;
+        let user1: u32 = 1;
+        let user2: u32 = 2;
 
-        let mut result: Map<MemberId, Vec<I256>> = Map::new(&env);
+        let mut result: Map<u32, Vec<I256>> = Map::new(&env);
         result.set(
             user1,
             vec![&env, I256::from_i128(&env, 1), I256::from_i128(&env, 2)],

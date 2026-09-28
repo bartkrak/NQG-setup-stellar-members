@@ -5,7 +5,7 @@ use soroban_sdk::{Address, Env, IntoVal, Map, TryFromVal, Val, contractclient};
 
 use crate::ContractResult;
 use crate::storage::read_membership_contract;
-use crate::types::{MemberId, VotingSystemError};
+use crate::types::VotingSystemError;
 
 /// The reads of the Stellar Membership contract this contract relies on.
 /// Only the client generated from it is called, never the trait.
@@ -22,7 +22,7 @@ pub trait Membership {
 /// Any failure of the membership contract reads as `NotAMember`: a token
 /// never minted, a revoked one, or a membership contract that cannot
 /// answer.
-pub(crate) fn require_member(env: &Env, member_id: MemberId) -> ContractResult<()> {
+pub(crate) fn require_member(env: &Env, member_id: u32) -> ContractResult<()> {
     let membership = MembershipClient::new(env, &read_membership_contract(env));
     match membership.try_owner_of(&member_id) {
         Ok(Ok(_)) => Ok(()),
@@ -31,7 +31,7 @@ pub(crate) fn require_member(env: &Env, member_id: MemberId) -> ContractResult<(
 }
 
 /// Require that every key of an uploaded map names an active member.
-pub(crate) fn require_members<V>(env: &Env, map: &Map<MemberId, V>) -> ContractResult<()>
+pub(crate) fn require_members<V>(env: &Env, map: &Map<u32, V>) -> ContractResult<()>
 where
     V: IntoVal<Env, Val> + TryFromVal<Env, Val>,
 {

@@ -24,26 +24,7 @@ pub struct NeuronKeyData {
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
-pub struct SubmissionVotesKeyData {
-    submission_id: String,
-    round: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct SubmissionsKeyData {
-    round: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
 pub struct VotingPowersKeyData {
-    round: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct TallyResultsKeyData {
     round: u32,
 }
 
@@ -71,27 +52,9 @@ pub fn get_neuron_result_key(layer_id: &String, neuron_id: &String, round: u32) 
     DataKey::NeuronResultKey(data)
 }
 
-pub fn get_submission_votes_key(submission_id: &String, round: u32) -> DataKey {
-    let data = SubmissionVotesKeyData {
-        submission_id: submission_id.clone(),
-        round,
-    };
-    DataKey::SubmissionVotes(data)
-}
-
-pub fn get_submissions_key(round: u32) -> DataKey {
-    let data = SubmissionsKeyData { round };
-    DataKey::Submissions(data)
-}
-
 pub fn get_voting_powers_key(round: u32) -> DataKey {
     let data = VotingPowersKeyData { round };
     DataKey::VotingPowers(data)
-}
-
-pub fn get_tally_results_key(round: u32) -> DataKey {
-    let data = TallyResultsKeyData { round };
-    DataKey::TallyResults(data)
 }
 
 #[cfg(test)]
