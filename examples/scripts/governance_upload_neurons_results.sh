@@ -2,6 +2,9 @@
 ENV_PATH=".env"
 source $ENV_PATH
 
+# Results are maps from Stellar Membership token id to fixed point value,
+# e.g. {"0":"15000000000000000000","1":"30000000000000000000"}. JSON keys are
+# strings; the stellar CLI parses them into the contract's u32 keys.
 NEURONS_FILE="./data/neurons_output.json"
 
 NEURON1=$(jq -c '.Neuron1' "$NEURONS_FILE")
@@ -17,9 +20,9 @@ stellar contract invoke \
     --rpc-url $STELLAR_RPC_URL \
     --network-passphrase "$STELLAR_NETWORK_PASSPHRASE" \
     -- set_neuron_result \
-    --layer_id '{"string":"0"}' \
-    --neuron_id '{"string":"0"}' \
-    --result=$NEURON1
+    --layer_id 0 \
+    --neuron_id 0 \
+    --result "$NEURON1"
 
 echo "Uploading neuron2 data"
 echo "$NEURON2"
@@ -30,9 +33,9 @@ stellar contract invoke \
     --rpc-url $STELLAR_RPC_URL \
     --network-passphrase "$STELLAR_NETWORK_PASSPHRASE" \
     -- set_neuron_result \
-    --layer_id '{"string":"0"}' \
-    --neuron_id '{"string":"1"}' \
-    --result=$NEURON2
+    --layer_id 0 \
+    --neuron_id 1 \
+    --result "$NEURON2"
 
 echo "Uploading neuron3 data"
 echo "$NEURON3"
@@ -43,6 +46,6 @@ stellar contract invoke \
     --rpc-url $STELLAR_RPC_URL \
     --network-passphrase "$STELLAR_NETWORK_PASSPHRASE" \
     -- set_neuron_result \
-    --layer_id '{"string":"1"}' \
-    --neuron_id '{"string":"0"}' \
-    --result=$NEURON3
+    --layer_id 1 \
+    --neuron_id 0 \
+    --result "$NEURON3"

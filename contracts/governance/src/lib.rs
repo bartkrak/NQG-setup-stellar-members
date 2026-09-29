@@ -8,28 +8,28 @@ use alloc::string::ToString;
 // use soroban_fixed_point_math::SorobanFixedPoint;
 use soroban_sdk::{
     Address, BytesN, ContractExecutable, Env, I256, Map, String, Vec, contract, contractimpl,
-    contracttype, vec,
+    contracttype,
 };
 
 use admin::require_admin;
 
 use crate::admin::set_admin;
 use crate::admin::traits::Admin;
+use crate::membership::require_members;
 pub use crate::neural_governance::LayerAggregator;
 use crate::neural_governance::traits::Governance;
 use crate::neural_governance::{Layer, NGQ, Neuron, aggregate_result};
 use crate::storage::{
-    LayerKeyData, NeuronKeyData, NeuronResultKeyData, SubmissionVotesKeyData, SubmissionsKeyData,
-    TallyResultsKeyData, VotingPowersKeyData, read_layer, read_neural_governance, read_neuron,
-    read_neuron_result, read_submission_votes, read_submissions, read_tally_results,
-    read_voting_powers, remove_layer, remove_neuron, write_layer, write_neural_governance,
-    write_neuron, write_neuron_result, write_submission_votes, write_submissions,
-    write_tally_results, write_voting_powers,
+    LayerKeyData, NeuronKeyData, NeuronResultKeyData, VotingPowersKeyData, read_layer,
+    read_membership_contract, read_neural_governance, read_neuron, read_neuron_result,
+    read_voting_powers, remove_layer, remove_neuron, write_layer, write_membership_contract,
+    write_neural_governance, write_neuron, write_neuron_result, write_voting_powers,
 };
-use crate::types::{ABSTAIN_VOTING_POWER, Vote, VotingSystemError};
+use crate::types::VotingSystemError;
 
 mod admin;
 mod fixed_mul_floor;
+mod membership;
 mod neural_governance;
 mod storage;
 pub mod types;
@@ -47,34 +47,37 @@ pub enum DataKey {
     /// storage type: instance
     NeuralGovernance,
     /// storage type: instance
-    /// Map<String, ()>
-    Submissions(SubmissionsKeyData),
-    /// storage type: instance
-    /// `Map<user_id, Vec<user_id>>` - users to the vector of users they delegated their votes to
-    Delegatees,
-    // storage type: instance
-    // Map<UserUUID, u32> - users to their delegation rank
-    DelegationRanks,
-    /// storage type: instance
     /// u32
     CurrentLayerId,
     Admin,
     /// u32
     CurrentRound,
+    /// storage type: instance
+    /// Address of the Stellar Membership contract whose token ids identify voters
+    MembershipContract,
     NeuronKey(NeuronKeyData),
     NeuronResultKey(NeuronResultKeyData),
     LayerKey(LayerKeyData),
-    SubmissionVotes(SubmissionVotesKeyData),
     VotingPowers(VotingPowersKeyData),
-
-    TallyResults(TallyResultsKeyData),
 }
 
 #[contractimpl]
 impl VotingSystem {
     /// Initialize the governance contract.
-    pub fn __constructor(env: Env, admin: Address, current_round: u32) {
+    ///
+    /// # Arguments
+    ///
+    /// * `admin`: account allowed to configure the contract and upload neuron results.
+    /// * `current_round`: the active voting round.
+    /// * `membership_contract`: Stellar Membership contract whose token ids identify voters.
+    pub fn __constructor(
+        env: Env,
+        admin: Address,
+        current_round: u32,
+        membership_contract: Address,
+    ) {
         set_admin(&env, &admin);
+        write_membership_contract(&env, &membership_contract);
 
         let neural_governance = NGQ::new(&env);
         env.storage()
@@ -98,124 +101,31 @@ impl VotingSystem {
         env.storage().instance().set(&DataKey::CurrentRound, &round);
     }
 
-    /// Set multiple submissions.
-    pub fn set_submissions(env: Env, new_submissions_raw: Vec<(String, String)>) {
-        let mut new_submissions = vec![&env];
-        for (name, category) in new_submissions_raw {
-            new_submissions.push_back((name, category));
-        }
+    /// Get the Stellar Membership contract whose token ids identify voters.
+    pub fn get_membership_contract(env: &Env) -> Address {
+        read_membership_contract(env)
+    }
 
+    /// Change the Stellar Membership contract. Admin only.
+    ///
+    /// Voters are validated against it on every upload, so a wrong address
+    /// makes every upload fail with `NotAMember` rather than letting unknown
+    /// ids through.
+    pub fn set_membership_contract(env: Env, membership_contract: Address) {
         require_admin(&env);
 
-        let mut submissions = Vec::new(&env);
-
-        for submission in new_submissions {
-            if submissions.contains(submission.clone()) {
-                continue;
-            }
-            submissions.push_back(submission);
-        }
-
-        write_submissions(&env, Self::get_current_round(&env), &submissions);
+        write_membership_contract(&env, &membership_contract);
     }
 
-    /// Get submissions for the active round.
-    pub fn get_submissions(env: &Env) -> Vec<(String, String)> {
-        read_submissions(env, Self::get_current_round(env))
-    }
-
-    /// Set votes for a submission.
-    pub fn set_votes_for_submission(
-        env: &Env,
-        submission_id: String,
-        votes: Map<Address, Vote>,
-    ) -> Result<(), VotingSystemError> {
-        require_admin(env);
-
-        if !read_submissions(env, Self::get_current_round(env))
-            .iter()
-            .any(|(name, _category)| name == submission_id)
-        {
-            return Err(VotingSystemError::SubmissionDoesNotExist);
-        }
-
-        // this causes timeout god knows why
-        write_submission_votes(env, &submission_id, Self::get_current_round(env), &votes);
-        Ok(())
-    }
-
-    /// Get votes for the submission for a specific round.
-    pub fn get_votes_for_submission_round(
-        env: &Env,
-        submission_id: String,
-        round: u32,
-    ) -> Result<Map<Address, Vote>, VotingSystemError> {
-        read_submission_votes(env, &submission_id, round)
-    }
-
-    /// Get votes for the submission for the active round
-    pub fn get_votes_for_submission(
-        env: &Env,
-        submission_id: String,
-    ) -> Result<Map<Address, Vote>, VotingSystemError> {
-        Self::get_votes_for_submission_round(env, submission_id, Self::get_current_round(env))
-    }
-
-    /// Compute the final voting power of a submission.
+    /// Get the voting power (NQG score) of a member for the active round.
     ///
-    /// Requires calling `calculate_voting_powers` first to compute and store voting powers for the round.
+    /// # Arguments
     ///
-    /// # Panics:
-    ///
-    /// The function will panic if no voting powers are set for the active round.
-    pub fn tally_submission(env: &Env, submission_id: String) -> Result<I256, VotingSystemError> {
-        require_admin(env);
-        let submission_votes = Self::get_votes_for_submission(env, submission_id.clone())?;
-        let mut submission_voting_power_plus = I256::from_i32(env, 0);
-        let mut submission_voting_power_minus = I256::from_i32(env, 0);
-        let voting_powers = Self::get_voting_powers(env.clone())?;
-
-        for (voter_id, vote) in submission_votes {
-            let voting_power = match vote {
-                Vote::Abstain => I256::from_i32(env, ABSTAIN_VOTING_POWER),
-                _ => voting_powers
-                    .get(voter_id)
-                    .ok_or(VotingSystemError::NGQResultForVoterMissing)?,
-            };
-            match vote {
-                Vote::Yes => {
-                    submission_voting_power_plus = submission_voting_power_plus.add(&voting_power);
-                }
-                Vote::No => {
-                    submission_voting_power_minus =
-                        submission_voting_power_minus.add(&voting_power);
-                }
-                Vote::Abstain => (),
-            }
-        }
-        let tally_result: I256 = submission_voting_power_plus.sub(&submission_voting_power_minus);
-        let mut tally_results: Map<String, I256> =
-            match read_tally_results(env, Self::get_current_round(env)) {
-                Ok(tally_results) => tally_results,
-                Err(_) => Map::new(env),
-            };
-        tally_results.set(submission_id, tally_result.clone());
-        write_tally_results(env, Self::get_current_round(env), &tally_results);
-        Ok(tally_result)
-    }
-
-    /// Get tally results for all submissions for a specific round.
-    pub fn get_tally_results(
-        env: &Env,
-        round: u32,
-    ) -> Result<Map<String, I256>, VotingSystemError> {
-        read_tally_results(env, round)
-    }
-
-    pub fn get_voting_power_for_user(env: Env, user: Address) -> Result<I256, VotingSystemError> {
+    /// * `member_id`: the member's Stellar Membership token id.
+    pub fn get_voting_power_for_id(env: Env, member_id: u32) -> Result<I256, VotingSystemError> {
         match read_voting_powers(&env, Self::get_current_round(&env)) {
             Ok(voting_powers) => {
-                if let Some(voting_power) = voting_powers.get(user) {
+                if let Some(voting_power) = voting_powers.get(member_id) {
                     return Ok(voting_power);
                 }
                 Err(VotingSystemError::NGQResultForVoterMissing)
@@ -300,7 +210,7 @@ impl Governance for VotingSystem {
         layer_id: String,
         neuron_id: String,
         round: u32,
-    ) -> Result<Map<Address, I256>, VotingSystemError> {
+    ) -> Result<Map<u32, I256>, VotingSystemError> {
         read_neuron_result(env, &layer_id, &neuron_id, round)
     }
 
@@ -308,7 +218,7 @@ impl Governance for VotingSystem {
         env: &Env,
         layer_id: String,
         neuron_id: String,
-    ) -> Result<Map<Address, I256>, VotingSystemError> {
+    ) -> Result<Map<u32, I256>, VotingSystemError> {
         Self::get_neuron_result_round(env, layer_id, neuron_id, Self::get_current_round(env))
     }
 
@@ -316,9 +226,10 @@ impl Governance for VotingSystem {
         env: Env,
         layer_id: String,
         neuron_id: String,
-        result: Map<Address, I256>,
-    ) {
+        result: Map<u32, I256>,
+    ) -> Result<(), VotingSystemError> {
         require_admin(&env);
+        require_members(&env, &result)?;
 
         write_neuron_result(
             &env,
@@ -327,24 +238,22 @@ impl Governance for VotingSystem {
             Self::get_current_round(&env),
             &result,
         );
+        Ok(())
     }
 
     /// Get a result of a whole layer
     ///
     /// Gets a result of each neuron and aggregates them using a configured aggregator function
-    fn get_layer_result(
-        env: Env,
-        layer_id: String,
-    ) -> Result<Map<Address, I256>, VotingSystemError> {
+    fn get_layer_result(env: Env, layer_id: String) -> Result<Map<u32, I256>, VotingSystemError> {
         let layer = read_layer(&env, &layer_id)?;
-        let mut result: Map<Address, Vec<I256>> = Map::new(&env);
+        let mut result: Map<u32, Vec<I256>> = Map::new(&env);
 
         for neuron_id in layer.neurons {
             let neuron_result = Self::get_neuron_result(&env, layer_id.clone(), neuron_id.clone())?;
             let neuron = read_neuron(&env, &layer_id, &neuron_id)?;
             let neuron_result = weigh_neuron_result(&env, &neuron.weight, neuron_result);
             for (user, new) in neuron_result {
-                let mut previous = result.get(user.clone()).unwrap_or_else(|| Vec::new(&env));
+                let mut previous = result.get(user).unwrap_or_else(|| Vec::new(&env));
                 previous.push_back(new);
                 result.set(user, previous);
             }
@@ -365,7 +274,7 @@ impl Governance for VotingSystem {
         let layers = neural_governance.layers;
         let layer_count = layers.len();
         let zero = I256::from_i32(&env, 0);
-        let mut result: Map<Address, I256> = Map::new(&env);
+        let mut result: Map<u32, I256> = Map::new(&env);
         let mut expected_users = 0u32;
 
         for (layer_idx, layer_id) in (0u32..).zip(layers.iter()) {
@@ -377,11 +286,7 @@ impl Governance for VotingSystem {
             }
             let is_last_layer = layer_idx + 1 == layer_count;
             for (key, value) in layer_result.iter() {
-                let summed = value.add(
-                    &result
-                        .get(key.clone())
-                        .unwrap_or_else(|| I256::from_i32(&env, 0)),
-                );
+                let summed = value.add(&result.get(key).unwrap_or_else(|| I256::from_i32(&env, 0)));
                 let voting_power = if is_last_layer && summed < zero {
                     zero.clone()
                 } else {
@@ -399,7 +304,7 @@ impl Governance for VotingSystem {
         Ok(())
     }
 
-    fn get_voting_powers(env: Env) -> Result<Map<Address, I256>, VotingSystemError> {
+    fn get_voting_powers(env: Env) -> Result<Map<u32, I256>, VotingSystemError> {
         read_voting_powers(&env, Self::get_current_round(&env))
     }
 
@@ -435,7 +340,7 @@ fn create_or_update_layer(
     write_neural_governance(&env, neural_governance);
 }
 
-fn weigh_neuron_result(env: &Env, weight: &I256, result: Map<Address, I256>) -> Map<Address, I256> {
+fn weigh_neuron_result(env: &Env, weight: &I256, result: Map<u32, I256>) -> Map<u32, I256> {
     let mut scaled = Map::new(env);
 
     for (key, value) in result {

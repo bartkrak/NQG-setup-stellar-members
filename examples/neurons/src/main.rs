@@ -4,7 +4,7 @@ mod neuron3;
 
 mod neurons;
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     fs::File,
     io::{BufReader, BufWriter},
 };
@@ -25,10 +25,10 @@ fn main() {
     let neuron2 = Neuron2::from_json("../data/neuron2_input.json");
     let neuron3 = Neuron3::from_json("../data/neuron3_input.json");
 
-    // 2. read voters list file
+    // 2. read voters list file: Stellar Membership token ids
     let file = File::open("../data/voters.json").unwrap();
     let reader = BufReader::new(file);
-    let users: Vec<String> = serde_json::from_reader(reader).unwrap();
+    let users: Vec<u32> = serde_json::from_reader(reader).unwrap();
 
     // 3. run neurons
     let results = calculate_neuron_results(
@@ -44,15 +44,18 @@ fn main() {
     println!("Done.");
 }
 
+/// Neuron name to its results, keyed by token id. JSON object keys are
+/// strings, so ids are written as `"0"`, `"1"`, ..., which the stellar CLI
+/// parses back into the contract's `u32` keys.
 fn calculate_neuron_results(
-    users: &[String],
+    users: &[u32],
     neurons: Vec<Box<dyn Neuron>>,
-) -> HashMap<String, HashMap<String, String>> {
-    let mut results: HashMap<String, HashMap<String, String>> = HashMap::new();
+) -> BTreeMap<String, BTreeMap<u32, String>> {
+    let mut results: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
     for neuron in neurons {
         println!("running {}", neuron.name());
         let result = neuron.calculate_result(users);
-        let result: HashMap<String, String> = result
+        let result: BTreeMap<u32, String> = result
             .into_iter()
             .map(|(key, value)| (key, to_fixed_point_decimal(value).to_string()))
             .collect();

@@ -19,7 +19,8 @@ NEURAL_GOVERNANCE_ADDRESS=$(stellar contract deploy \
   --source-account $STELLAR_SECRET_KEY \
   -- \
   --admin=$STELLAR_PUBLIC_KEY \
-  --current_round "$CURRENT_ROUND")
+  --current_round "$CURRENT_ROUND" \
+  --membership_contract "$MEMBERSHIP_CONTRACT_ADDRESS")
 
 echo "NEURAL_GOVERNANCE_ADDRESS: $NEURAL_GOVERNANCE_ADDRESS"
 echo "Contract admin initialized successfully, round set to $CURRENT_ROUND"
