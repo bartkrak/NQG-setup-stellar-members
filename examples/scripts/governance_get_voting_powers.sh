@@ -1,6 +1,6 @@
 #!/bin/bash
 # Reads the voting powers (NQG scores) calculated for the current round
-ENV_PATH=".env"
+ENV_PATH="${ENV_PATH:-.env}"
 source $ENV_PATH
 
 VOTERS_FILE="./data/voters.json"

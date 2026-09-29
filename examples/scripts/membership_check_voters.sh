@@ -2,7 +2,7 @@
 # Checks that every voter id in data/voters.json is an active member of the
 # Stellar Membership contract. The governance contract rejects neuron results
 # for any other id with NotAMember, so run this before uploading.
-ENV_PATH=".env"
+ENV_PATH="${ENV_PATH:-.env}"
 source $ENV_PATH
 
 VOTERS_FILE="./data/voters.json"

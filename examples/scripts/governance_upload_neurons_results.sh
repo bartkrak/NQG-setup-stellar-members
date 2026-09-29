@@ -1,5 +1,5 @@
 #!/bin/bash
-ENV_PATH=".env"
+ENV_PATH="${ENV_PATH:-.env}"
 source $ENV_PATH
 
 # Results are maps from Stellar Membership token id to fixed point value,
