@@ -2,7 +2,7 @@
 use crate::fixed_mul_floor::fixed_mul_floor;
 
 // use soroban_fixed_point_math::SorobanFixedPoint;
-use soroban_sdk::{Address, Env, I256, Map, String, Vec, contracttype};
+use soroban_sdk::{Env, I256, Map, String, Vec, contracttype};
 
 pub mod traits;
 
@@ -64,10 +64,10 @@ impl NGQ {
 
 pub(crate) fn aggregate_result(
     env: &Env,
-    result: Map<Address, Vec<I256>>,
+    result: Map<u32, Vec<I256>>,
     layer_aggregator: LayerAggregator,
     decimals: I256,
-) -> Map<Address, I256> {
+) -> Map<u32, I256> {
     let mut aggregated_result = Map::new(env);
     for (user, res) in result {
         let res = match layer_aggregator {
@@ -86,7 +86,7 @@ pub(crate) fn aggregate_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec};
+    use soroban_sdk::vec;
 
     #[test]
     fn creating_neuron() {
@@ -127,10 +127,10 @@ mod tests {
     fn aggregate_empty() {
         let env = Env::default();
 
-        let user1 = Address::generate(&env);
+        let user1: u32 = 1;
 
-        let mut result: Map<Address, Vec<I256>> = Map::new(&env);
-        result.set(user1.clone(), vec![&env]);
+        let mut result: Map<u32, Vec<I256>> = Map::new(&env);
+        result.set(user1, vec![&env]);
 
         let aggregated = aggregate_result(
             &env,
@@ -145,45 +145,39 @@ mod tests {
     fn aggregate_sum() {
         let env = Env::default();
 
-        let user1 = Address::generate(&env);
-        let user2 = Address::generate(&env);
+        let user1: u32 = 1;
+        let user2: u32 = 2;
 
-        let mut result: Map<Address, Vec<I256>> = Map::new(&env);
+        let mut result: Map<u32, Vec<I256>> = Map::new(&env);
         result.set(
-            user1.clone(),
+            user1,
             vec![&env, I256::from_i128(&env, 1), I256::from_i128(&env, 2)],
         );
         result.set(
-            user2.clone(),
+            user2,
             vec![&env, I256::from_i128(&env, 3), I256::from_i128(&env, 4)],
         );
 
         let aggregated =
             aggregate_result(&env, result, LayerAggregator::Sum, I256::from_i128(&env, 1));
-        assert_eq!(
-            aggregated.get(user1.clone()).unwrap(),
-            I256::from_i128(&env, 3)
-        );
-        assert_eq!(
-            aggregated.get(user2.clone()).unwrap(),
-            I256::from_i128(&env, 7)
-        );
+        assert_eq!(aggregated.get(user1).unwrap(), I256::from_i128(&env, 3));
+        assert_eq!(aggregated.get(user2).unwrap(), I256::from_i128(&env, 7));
     }
 
     #[test]
     fn aggregate_product() {
         let env = Env::default();
 
-        let user1 = Address::generate(&env);
-        let user2 = Address::generate(&env);
+        let user1: u32 = 1;
+        let user2: u32 = 2;
 
-        let mut result: Map<Address, Vec<I256>> = Map::new(&env);
+        let mut result: Map<u32, Vec<I256>> = Map::new(&env);
         result.set(
-            user1.clone(),
+            user1,
             vec![&env, I256::from_i128(&env, 1), I256::from_i128(&env, 2)],
         );
         result.set(
-            user2.clone(),
+            user2,
             vec![&env, I256::from_i128(&env, 3), I256::from_i128(&env, 4)],
         );
 
@@ -193,13 +187,7 @@ mod tests {
             LayerAggregator::Product,
             I256::from_i128(&env, 1),
         );
-        assert_eq!(
-            aggregated.get(user1.clone()).unwrap(),
-            I256::from_i128(&env, 2)
-        );
-        assert_eq!(
-            aggregated.get(user2.clone()).unwrap(),
-            I256::from_i128(&env, 12)
-        );
+        assert_eq!(aggregated.get(user1).unwrap(), I256::from_i128(&env, 2));
+        assert_eq!(aggregated.get(user2).unwrap(), I256::from_i128(&env, 12));
     }
 }

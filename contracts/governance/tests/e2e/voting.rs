@@ -1,17 +1,17 @@
 use soroban_sdk::{
-    Address, Env, I256, IntoVal, Map, String, Vec,
+    Address, Env, I256, Map, String, Vec,
     testutils::{Address as _, MockAuth, MockAuthInvoke},
     vec,
 };
 
-use governance::types::{Vote, VotingSystemError};
+use governance::types::VotingSystemError;
 use governance::{DECIMALS, LayerAggregator};
 
 use crate::e2e::common::contract_utils::deploy_contract;
 
 #[allow(clippy::identity_op)]
 #[test]
-fn voting_data_upload() {
+fn voting_powers_from_weighted_neurons() {
     let env = Env::default();
     let (contract_client, _admin) = deploy_contract(&env);
     env.cost_estimate().budget().reset_unlimited();
@@ -28,47 +28,19 @@ fn voting_data_upload() {
     ));
     contract_client.add_layer(&raw_neurons, &LayerAggregator::Sum);
 
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
-    let user3 = Address::generate(&env);
-    let submission1 = String::from_str(&env, "submission1");
-    let submission2 = String::from_str(&env, "submission2");
-
-    contract_client.set_submissions(&vec![
-        &env,
-        (submission1.clone(), String::from_str(&env, "Applications")),
-        (submission2.clone(), String::from_str(&env, "Applications")),
-    ]);
-
-    let mut votes_submission1 = Map::new(&env);
-    votes_submission1.set(user1.clone(), Vote::Yes);
-    votes_submission1.set(user2.clone(), Vote::Yes);
-    votes_submission1.set(user3.clone(), Vote::Yes);
-
-    // TODO use different votes here
-    let mut votes_submission2 = Map::new(&env);
-    votes_submission2.set(user1.clone(), Vote::Yes);
-    votes_submission2.set(user2.clone(), Vote::No);
-    votes_submission2.set(user3.clone(), Vote::Abstain);
-
-    contract_client.set_votes_for_submission(&submission1, &votes_submission1);
-    contract_client.set_votes_for_submission(&submission2, &votes_submission2);
-
-    contract_client.set_submissions(&vec![
-        &env,
-        (submission1.clone(), String::from_str(&env, "Applications")),
-        (submission2.clone(), String::from_str(&env, "Applications")),
-    ]);
+    let user1: u32 = 1;
+    let user2: u32 = 2;
+    let user3: u32 = 3;
 
     let mut neuron_result = Map::new(&env);
-    neuron_result.set(user1.clone(), I256::from_i128(&env, 100 * DECIMALS));
-    neuron_result.set(user2.clone(), I256::from_i128(&env, 200 * DECIMALS));
-    neuron_result.set(user3.clone(), I256::from_i128(&env, 300 * DECIMALS));
+    neuron_result.set(user1, I256::from_i128(&env, 100 * DECIMALS));
+    neuron_result.set(user2, I256::from_i128(&env, 200 * DECIMALS));
+    neuron_result.set(user3, I256::from_i128(&env, 300 * DECIMALS));
 
     let mut neuron_result2 = Map::new(&env);
-    neuron_result2.set(user1.clone(), I256::from_i128(&env, 1000 * DECIMALS));
-    neuron_result2.set(user2.clone(), I256::from_i128(&env, 2000 * DECIMALS));
-    neuron_result2.set(user3.clone(), I256::from_i128(&env, 3000 * DECIMALS));
+    neuron_result2.set(user1, I256::from_i128(&env, 1000 * DECIMALS));
+    neuron_result2.set(user2, I256::from_i128(&env, 2000 * DECIMALS));
+    neuron_result2.set(user3, I256::from_i128(&env, 3000 * DECIMALS));
 
     contract_client.set_neuron_result(
         &String::from_str(&env, "0"),
@@ -83,131 +55,67 @@ fn voting_data_upload() {
 
     env.cost_estimate().budget().reset_default();
     contract_client.calculate_voting_powers();
-    let result = contract_client.tally_submission(&submission1);
     println!("{}", env.cost_estimate().budget());
 
+    // Neuron 0 weighs 2, neuron 1 weighs 1, the layer sums them
+    let mut expected = Map::new(&env);
+    expected.set(user1, I256::from_i128(&env, (100 * 2 + 1000) * DECIMALS));
+    expected.set(user2, I256::from_i128(&env, (200 * 2 + 2000) * DECIMALS));
+    expected.set(user3, I256::from_i128(&env, (300 * 2 + 3000) * DECIMALS));
+    assert_eq!(contract_client.get_voting_powers(), expected);
     assert_eq!(
-        result,
-        I256::from_i128(
-            &env,
-            (100 * 2 + 200 * 2 + 300 * 2 + 1000 + 2000 + 3000) * DECIMALS
-        )
-    );
-
-    env.cost_estimate().budget().reset_default();
-    let result2 = contract_client.tally_submission(&submission2);
-    println!("{}", env.cost_estimate().budget());
-
-    assert_eq!(
-        result2,
-        I256::from_i128(&env, (100 * 2 - 200 * 2 + 1000 - 2000 + 0) * DECIMALS)
+        contract_client.get_voting_power_for_id(&user2),
+        I256::from_i128(&env, (200 * 2 + 2000) * DECIMALS)
     );
 }
 
 #[test]
-fn setting_votes_for_unknown_submission() {
-    let env = Env::default();
-    env.cost_estimate().budget().reset_unlimited();
-
-    let (contract_client, _admin) = deploy_contract(&env);
-    env.mock_all_auths();
-
-    assert_eq!(
-        contract_client
-            .try_set_votes_for_submission(&String::from_str(&env, "sub1"), &Map::new(&env))
-            .unwrap_err()
-            .unwrap(),
-        VotingSystemError::SubmissionDoesNotExist
-    );
-}
-
-#[test]
-fn tally_submission_requires_admin() {
+fn calculate_voting_powers_requires_admin() {
     let env = Env::default();
     env.cost_estimate().budget().reset_unlimited();
 
     let (contract_client, admin) = deploy_contract(&env);
+    env.mock_all_auths();
 
-    // Set up a submission and votes with admin auth
-    let submission = String::from_str(&env, "test_submission");
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_client.address,
-            fn_name: "set_submissions",
-            args: vec![
-                &env,
-                vec![
-                    &env,
-                    (submission.clone(), String::from_str(&env, "Applications")),
-                ]
-                .to_val(),
-            ],
-            sub_invokes: &[],
-        },
-    }]);
-    contract_client.set_submissions(&vec![
-        &env,
-        (submission.clone(), String::from_str(&env, "Applications")),
-    ]);
-
-    let user = Address::generate(&env);
-    let mut votes = Map::new(&env);
-    votes.set(user.clone(), Vote::Yes);
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_client.address,
-            fn_name: "set_votes_for_submission",
-            args: vec![&env, submission.clone().to_val(), votes.clone().to_val()],
-            sub_invokes: &[],
-        },
-    }]);
-    contract_client.set_votes_for_submission(&submission, &votes);
-
-    // Set up neuron results and calculate voting powers with admin auth
-    let mut raw_neurons: Vec<(String, I256)> = Vec::new(&env);
-    raw_neurons.push_back((
-        String::from_str(&env, "Dummy"),
-        I256::from_i128(&env, DECIMALS),
-    ));
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_client.address,
-            fn_name: "add_layer",
-            args: vec![
-                &env,
-                raw_neurons.clone().to_val(),
-                LayerAggregator::Sum.into_val(&env),
-            ],
-            sub_invokes: &[],
-        },
-    }]);
-    contract_client.add_layer(&raw_neurons, &LayerAggregator::Sum);
-
+    let user: u32 = 1;
+    contract_client.add_layer(
+        &vec![
+            &env,
+            (
+                String::from_str(&env, "Dummy"),
+                I256::from_i128(&env, DECIMALS),
+            ),
+        ],
+        &LayerAggregator::Sum,
+    );
     let mut neuron_result = Map::new(&env);
     neuron_result.set(user, I256::from_i128(&env, 100 * DECIMALS));
-    env.mock_auths(&[MockAuth {
-        address: &admin,
-        invoke: &MockAuthInvoke {
-            contract: &contract_client.address,
-            fn_name: "set_neuron_result",
-            args: vec![
-                &env,
-                String::from_str(&env, "0").to_val(),
-                String::from_str(&env, "0").to_val(),
-                neuron_result.clone().to_val(),
-            ],
-            sub_invokes: &[],
-        },
-    }]);
     contract_client.set_neuron_result(
         &String::from_str(&env, "0"),
         &String::from_str(&env, "0"),
         &neuron_result,
     );
 
+    // Anyone else is refused and no powers are written
+    env.mock_auths(&[MockAuth {
+        address: &Address::generate(&env),
+        invoke: &MockAuthInvoke {
+            contract: &contract_client.address,
+            fn_name: "calculate_voting_powers",
+            args: vec![&env],
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(contract_client.try_calculate_voting_powers().is_err());
+    assert_eq!(
+        contract_client
+            .try_get_voting_powers()
+            .unwrap_err()
+            .unwrap(),
+        VotingSystemError::VotingPowersNotSet
+    );
+
+    // The admin calculates them
     env.mock_auths(&[MockAuth {
         address: &admin,
         invoke: &MockAuthInvoke {
@@ -218,40 +126,10 @@ fn tally_submission_requires_admin() {
         },
     }]);
     contract_client.calculate_voting_powers();
-
-    // Try to tally without admin auth - should fail
-    let result = contract_client.try_tally_submission(&submission);
-    assert!(result.is_err());
-}
-
-#[test]
-fn adding_duplicate_submissions() {
-    let env = Env::default();
-    env.cost_estimate().budget().reset_unlimited();
-
-    let (contract_client, _admin) = deploy_contract(&env);
-    env.mock_all_auths();
-
-    contract_client.set_submissions(&vec![
-        &env,
-        (
-            String::from_str(&env, "a"),
-            String::from_str(&env, "Applications"),
-        ),
-        (
-            String::from_str(&env, "a"),
-            String::from_str(&env, "Applications"),
-        ),
-    ]);
-
-    let submissions = contract_client.get_submissions();
-    let mut expected = Vec::new(&env);
-    expected.push_back((
-        String::from_str(&env, "a"),
-        String::from_str(&env, "Applications"),
-    ));
-
-    assert_eq!(submissions, expected);
+    assert_eq!(
+        contract_client.get_voting_power_for_id(&user),
+        I256::from_i128(&env, 100 * DECIMALS)
+    );
 }
 
 #[test]
@@ -280,9 +158,8 @@ fn set_bump_round_flow() {
 
     contract_client.set_current_round(&25);
 
-    let submission = String::from_str(&env, "sub1");
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
+    let user1: u32 = 1;
+    let user2: u32 = 2;
     let neuron0 = String::from_str(&env, "0");
     let layer0 = String::from_str(&env, "0");
 
@@ -298,51 +175,33 @@ fn set_bump_round_flow() {
         &LayerAggregator::Sum,
     );
 
-    // Set votes and results for round 25
-    contract_client.set_submissions(&vec![
-        &env,
-        (submission.clone(), String::from_str(&env, "Applications")),
-    ]);
-
-    let mut votes25 = Map::new(&env);
-    votes25.set(user1.clone(), Vote::Yes);
-    votes25.set(user2.clone(), Vote::No);
-    contract_client.set_votes_for_submission(&submission, &votes25);
-    let expected25 = votes25.clone();
-
+    // Set results for round 25
     let mut result25 = Map::new(&env);
-    result25.set(user1.clone(), I256::from_i128(&env, 100));
-    result25.set(user2.clone(), I256::from_i128(&env, 200));
+    result25.set(user1, I256::from_i128(&env, 100));
+    result25.set(user2, I256::from_i128(&env, 200));
     contract_client.set_neuron_result(&layer0, &neuron0, &result25);
 
     // Verify results are set
     assert_eq!(
-        contract_client.get_votes_for_submission(&submission),
-        expected25
-    );
-    assert_eq!(
         contract_client.get_neuron_result(&layer0, &neuron0),
         result25
     );
-
-    // Verify submission is active
-    assert!(
-        contract_client
-            .get_submissions()
-            .iter()
-            .any(|(name, _category)| name == submission)
+    contract_client.calculate_voting_powers();
+    assert_eq!(
+        contract_client.get_voting_power_for_id(&user1),
+        I256::from_i128(&env, 100)
     );
 
     // Bump the round
     contract_client.set_current_round(&26);
 
-    // Verify results are unset for previous round submission
+    // Verify results and powers are unset for the new round
     assert_eq!(
         contract_client
-            .try_get_votes_for_submission(&submission)
+            .try_get_voting_powers()
             .unwrap_err()
             .unwrap(),
-        VotingSystemError::VotesForSubmissionNotSet
+        VotingSystemError::VotingPowersNotSet
     );
     assert_eq!(
         contract_client
@@ -352,56 +211,24 @@ fn set_bump_round_flow() {
         VotingSystemError::NeuronResultNotSet
     );
 
-    // Set votes and results for round 26
-    let new_submission = String::from_str(&env, "sub2");
-    contract_client.set_submissions(&vec![
-        &env,
-        (
-            new_submission.clone(),
-            String::from_str(&env, "Applications"),
-        ),
-    ]);
-
-    let mut votes26 = Map::new(&env);
-    votes26.set(user1.clone(), Vote::No);
-    votes26.set(user2.clone(), Vote::Yes);
-    contract_client.set_votes_for_submission(&new_submission, &votes26);
-    let expected26 = votes26.clone();
-
+    // Set results for round 26
     let mut result26 = Map::new(&env);
-    result26.set(user1.clone(), I256::from_i128(&env, 5000));
-    result26.set(user2.clone(), I256::from_i128(&env, 6000));
+    result26.set(user1, I256::from_i128(&env, 5000));
+    result26.set(user2, I256::from_i128(&env, 6000));
     contract_client.set_neuron_result(&layer0, &neuron0, &result26);
 
     // Verify results are set
     assert_eq!(
-        contract_client.get_votes_for_submission(&new_submission),
-        expected26
-    );
-    assert_eq!(
         contract_client.get_neuron_result(&layer0, &neuron0),
         result26
     );
-
-    // Verify new submission is active and old is not
-    assert!(
-        contract_client
-            .get_submissions()
-            .iter()
-            .any(|(name, _category)| name == new_submission)
-    );
-    assert!(
-        !contract_client
-            .get_submissions()
-            .iter()
-            .any(|(name, _category)| name == submission)
+    contract_client.calculate_voting_powers();
+    assert_eq!(
+        contract_client.get_voting_power_for_id(&user1),
+        I256::from_i128(&env, 5000)
     );
 
     // Verify historical results are still accessible
-    assert_eq!(
-        contract_client.get_votes_for_submission_round(&submission, &25),
-        expected25
-    );
     assert_eq!(
         contract_client.get_neuron_result_round(&layer0, &neuron0, &25),
         result25
@@ -409,7 +236,7 @@ fn set_bump_round_flow() {
 }
 
 #[test]
-fn get_voting_power_for_user() {
+fn get_voting_power_for_id() {
     let env = Env::default();
     env.cost_estimate().budget().reset_unlimited();
 
@@ -418,8 +245,8 @@ fn get_voting_power_for_user() {
 
     contract_client.set_current_round(&25);
 
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
+    let user1: u32 = 1;
+    let user2: u32 = 2;
     let neuron0 = String::from_str(&env, "0");
     let neuron1 = String::from_str(&env, "1");
     let layer0 = String::from_str(&env, "0");
@@ -441,13 +268,13 @@ fn get_voting_power_for_user() {
     );
 
     let mut result0 = Map::new(&env);
-    result0.set(user1.clone(), I256::from_i128(&env, 100));
-    result0.set(user2.clone(), I256::from_i128(&env, 200));
+    result0.set(user1, I256::from_i128(&env, 100));
+    result0.set(user2, I256::from_i128(&env, 200));
     contract_client.set_neuron_result(&layer0, &neuron0, &result0);
 
     let mut result1 = Map::new(&env);
-    result1.set(user1.clone(), I256::from_i128(&env, 222));
-    result1.set(user2.clone(), I256::from_i128(&env, 333));
+    result1.set(user1, I256::from_i128(&env, 222));
+    result1.set(user2, I256::from_i128(&env, 333));
     contract_client.set_neuron_result(&layer0, &neuron1, &result1);
 
     // Verify results are set
@@ -462,17 +289,17 @@ fn get_voting_power_for_user() {
     contract_client.calculate_voting_powers();
     // Verify correct voting powers are returned for each user
     assert_eq!(
-        contract_client.get_voting_power_for_user(&user1),
+        contract_client.get_voting_power_for_id(&user1),
         I256::from_i32(&env, 322)
     );
     assert_eq!(
-        contract_client.get_voting_power_for_user(&user2),
+        contract_client.get_voting_power_for_id(&user2),
         I256::from_i32(&env, 533)
     );
     // Verify error is returned for invalid user
     assert_eq!(
         contract_client
-            .try_get_voting_power_for_user(&Address::generate(&env))
+            .try_get_voting_power_for_id(&99)
             .unwrap_err()
             .unwrap(),
         VotingSystemError::NGQResultForVoterMissing
@@ -489,9 +316,9 @@ fn calculate_voting_powers_clamps_negative_nqg_to_zero() {
 
     contract_client.set_current_round(&25);
 
-    let user_negative = Address::generate(&env);
-    let user_positive = Address::generate(&env);
-    let user_recovers = Address::generate(&env);
+    let user_negative: u32 = 1;
+    let user_positive: u32 = 2;
+    let user_recovers: u32 = 3;
     let neuron0 = String::from_str(&env, "0");
     let layer0 = String::from_str(&env, "0");
     let layer1 = String::from_str(&env, "1");
@@ -518,29 +345,29 @@ fn calculate_voting_powers_clamps_negative_nqg_to_zero() {
     );
 
     let mut layer0_result = Map::new(&env);
-    layer0_result.set(user_negative.clone(), I256::from_i128(&env, 100));
-    layer0_result.set(user_positive.clone(), I256::from_i128(&env, 200));
-    layer0_result.set(user_recovers.clone(), I256::from_i128(&env, -100));
+    layer0_result.set(user_negative, I256::from_i128(&env, 100));
+    layer0_result.set(user_positive, I256::from_i128(&env, 200));
+    layer0_result.set(user_recovers, I256::from_i128(&env, -100));
     contract_client.set_neuron_result(&layer0, &neuron0, &layer0_result);
 
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_negative.clone(), I256::from_i128(&env, -500));
-    layer1_result.set(user_positive.clone(), I256::from_i128(&env, 300));
-    layer1_result.set(user_recovers.clone(), I256::from_i128(&env, 300));
+    layer1_result.set(user_negative, I256::from_i128(&env, -500));
+    layer1_result.set(user_positive, I256::from_i128(&env, 300));
+    layer1_result.set(user_recovers, I256::from_i128(&env, 300));
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     contract_client.calculate_voting_powers();
 
     assert_eq!(
-        contract_client.get_voting_power_for_user(&user_negative),
+        contract_client.get_voting_power_for_id(&user_negative),
         I256::from_i32(&env, 0)
     );
     assert_eq!(
-        contract_client.get_voting_power_for_user(&user_positive),
+        contract_client.get_voting_power_for_id(&user_positive),
         I256::from_i32(&env, 500)
     );
     assert_eq!(
-        contract_client.get_voting_power_for_user(&user_recovers),
+        contract_client.get_voting_power_for_id(&user_recovers),
         I256::from_i32(&env, 200)
     );
 }
@@ -555,8 +382,8 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
 
     contract_client.set_current_round(&25);
 
-    let user_negative = Address::generate(&env);
-    let user_positive = Address::generate(&env);
+    let user_negative: u32 = 1;
+    let user_positive: u32 = 2;
     let neuron0 = String::from_str(&env, "0");
     let layer0 = String::from_str(&env, "0");
     let layer1 = String::from_str(&env, "1");
@@ -583,13 +410,13 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
     );
 
     let mut layer0_result = Map::new(&env);
-    layer0_result.set(user_negative.clone(), I256::from_i128(&env, -100));
-    layer0_result.set(user_positive.clone(), I256::from_i128(&env, 200));
+    layer0_result.set(user_negative, I256::from_i128(&env, -100));
+    layer0_result.set(user_positive, I256::from_i128(&env, 200));
     contract_client.set_neuron_result(&layer0, &neuron0, &layer0_result);
 
     // user_negative is absent from the last layer, so its -100 would never be clamped
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_positive.clone(), I256::from_i128(&env, 300));
+    layer1_result.set(user_positive, I256::from_i128(&env, 300));
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     assert_eq!(
@@ -602,8 +429,8 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
 
     // Same user count per layer but different users must be rejected too
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_positive.clone(), I256::from_i128(&env, 300));
-    layer1_result.set(Address::generate(&env), I256::from_i128(&env, 300));
+    layer1_result.set(user_positive, I256::from_i128(&env, 300));
+    layer1_result.set(3, I256::from_i128(&env, 300));
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     assert_eq!(
@@ -616,18 +443,18 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
 
     // With user sets aligned the calculation succeeds and the clamp applies
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_negative.clone(), I256::from_i128(&env, 50));
-    layer1_result.set(user_positive.clone(), I256::from_i128(&env, 300));
+    layer1_result.set(user_negative, I256::from_i128(&env, 50));
+    layer1_result.set(user_positive, I256::from_i128(&env, 300));
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     contract_client.calculate_voting_powers();
 
     assert_eq!(
-        contract_client.get_voting_power_for_user(&user_negative),
+        contract_client.get_voting_power_for_id(&user_negative),
         I256::from_i32(&env, 0)
     );
     assert_eq!(
-        contract_client.get_voting_power_for_user(&user_positive),
+        contract_client.get_voting_power_for_id(&user_positive),
         I256::from_i32(&env, 500)
     );
 }
