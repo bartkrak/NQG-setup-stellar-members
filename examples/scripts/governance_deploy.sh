@@ -1,6 +1,6 @@
 #!/bin/bash
 # Script builds, deploys, and initializes neural governance contract
-ENV_PATH=".env"
+ENV_PATH="${ENV_PATH:-.env}"
 source $ENV_PATH
 
 echo "CURRENT_ROUND: $CURRENT_ROUND"

@@ -1,5 +1,5 @@
 #!/bin/bash
-ENV_PATH=".env"
+ENV_PATH="${ENV_PATH:-.env}"
 source $ENV_PATH
 
 echo "Calculating voting powers"
