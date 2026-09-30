@@ -1,0 +1,13 @@
+[package]
+name = "host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+methods = { path = "../methods" }
+prior-voting-history-core = { path = "../prior-voting-history-core" }
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["client", "disable-dev-mode"] }
+verifier = { path = "../verifier" }
