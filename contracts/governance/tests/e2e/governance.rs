@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, I256, String, Vec, vec};
+use soroban_sdk::{Env, String, Vec, vec};
 
 use governance::LayerAggregator;
 use governance::types::VotingSystemError;
@@ -16,8 +16,8 @@ fn add_layer() {
 
     let neurons = vec![
         &env,
-        (String::from_str(&env, "aaa"), I256::from_i32(&env, 100)),
-        (String::from_str(&env, "b"), I256::from_i32(&env, 2000)),
+        (String::from_str(&env, "aaa"), 100),
+        (String::from_str(&env, "b"), 2000),
     ];
     contract_client.add_layer(&neurons, &LayerAggregator::Sum);
 
@@ -38,12 +38,12 @@ fn add_layer() {
     let neuron_0 =
         contract_client.get_neuron(&String::from_str(&env, "0"), &String::from_str(&env, "0"));
     assert_eq!(neuron_0.name, String::from_str(&env, "aaa"));
-    assert_eq!(neuron_0.weight, I256::from_i32(&env, 100));
+    assert_eq!(neuron_0.weight, 100);
 
     let neuron_1 =
         contract_client.get_neuron(&String::from_str(&env, "0"), &String::from_str(&env, "1"));
     assert_eq!(neuron_1.name, String::from_str(&env, "b"));
-    assert_eq!(neuron_1.weight, I256::from_i32(&env, 2000));
+    assert_eq!(neuron_1.weight, 2000);
 }
 
 #[test]
@@ -58,8 +58,8 @@ fn remove_layer() {
 
     let neurons = vec![
         &env,
-        (String::from_str(&env, "aaa"), I256::from_i32(&env, 100)),
-        (String::from_str(&env, "b"), I256::from_i32(&env, 2000)),
+        (String::from_str(&env, "aaa"), 100),
+        (String::from_str(&env, "b"), 2000),
     ];
     contract_client.add_layer(&neurons, &LayerAggregator::Sum);
 
@@ -96,14 +96,14 @@ fn add_layer_after_removing() {
 
     let neurons = vec![
         &env,
-        (String::from_str(&env, "aaa"), I256::from_i32(&env, 100)),
-        (String::from_str(&env, "b"), I256::from_i32(&env, 2000)),
+        (String::from_str(&env, "aaa"), 100),
+        (String::from_str(&env, "b"), 2000),
     ];
     contract_client.add_layer(&neurons, &LayerAggregator::Sum);
 
     contract_client.remove_layer(&String::from_str(&env, "0"));
 
-    let neurons = vec![&env, (String::from_str(&env, "c"), I256::from_i32(&env, 1))];
+    let neurons = vec![&env, (String::from_str(&env, "c"), 1)];
     contract_client.add_layer(&neurons, &LayerAggregator::Product);
 
     let governance = contract_client.get_neural_governance();
@@ -116,5 +116,5 @@ fn add_layer_after_removing() {
     let neuron_0 =
         contract_client.get_neuron(&String::from_str(&env, "1"), &String::from_str(&env, "0"));
     assert_eq!(neuron_0.name, String::from_str(&env, "c"));
-    assert_eq!(neuron_0.weight, I256::from_i32(&env, 1));
+    assert_eq!(neuron_0.weight, 1);
 }

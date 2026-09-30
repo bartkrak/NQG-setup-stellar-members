@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, I256, Map, String};
+use soroban_sdk::{Address, Env, Map, String};
 
 use crate::neural_governance::{Layer, NGQ, Neuron};
 use crate::storage::key_data::{
@@ -58,7 +58,7 @@ pub(crate) fn read_neuron_result(
     layer_id: &String,
     neuron_id: &String,
     round: u32,
-) -> ContractResult<Map<u32, I256>> {
+) -> ContractResult<Map<u32, i64>> {
     let key = get_neuron_result_key(layer_id, neuron_id, round);
     env.storage()
         .temporary()
@@ -71,7 +71,7 @@ pub(crate) fn write_neuron_result(
     layer_id: &String,
     neuron_id: &String,
     round: u32,
-    result: &Map<u32, I256>,
+    result: &Map<u32, i64>,
 ) {
     let key = get_neuron_result_key(layer_id, neuron_id, round);
     env.storage().temporary().set(&key, result);
@@ -104,7 +104,7 @@ pub(crate) fn write_membership_contract(env: &Env, membership_contract: &Address
         .set(&DataKey::MembershipContract, membership_contract);
 }
 
-pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<u32, I256>> {
+pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<u32, i64>> {
     let key = get_voting_powers_key(round);
     env.storage()
         .persistent()
@@ -112,7 +112,7 @@ pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<u3
         .ok_or(VotingSystemError::VotingPowersNotSet)
 }
 
-pub(crate) fn write_voting_powers(env: &Env, round: u32, voting_powers: &Map<u32, I256>) {
+pub(crate) fn write_voting_powers(env: &Env, round: u32, voting_powers: &Map<u32, i64>) {
     let key = get_voting_powers_key(round);
     env.storage().persistent().set(&key, voting_powers);
 }

@@ -15,7 +15,9 @@ use neuron3::Neuron3;
 
 use crate::neurons::Neuron;
 
-pub const DECIMALS: i64 = 1_000_000_000_000_000_000;
+/// Results are i64 fixed point numbers with 6 decimals, as the NQG contract
+/// stores them: 1.0 is `1_000_000`.
+pub const DECIMALS: i64 = 1_000_000;
 
 fn main() {
     println!("Calculating neurons results...");
@@ -46,25 +48,37 @@ fn main() {
 
 /// Neuron name to its results, keyed by token id. JSON object keys are
 /// strings, so ids are written as `"0"`, `"1"`, ..., which the stellar CLI
-/// parses back into the contract's `u32` keys.
+/// parses back into the contract's `u32` keys. Values are JSON numbers: the
+/// CLI accepts an i64 only as a number.
 fn calculate_neuron_results(
     users: &[u32],
     neurons: Vec<Box<dyn Neuron>>,
-) -> BTreeMap<String, BTreeMap<u32, String>> {
-    let mut results: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
+) -> BTreeMap<String, BTreeMap<u32, i64>> {
+    let mut results: BTreeMap<String, BTreeMap<u32, i64>> = BTreeMap::new();
     for neuron in neurons {
         println!("running {}", neuron.name());
         let result = neuron.calculate_result(users);
-        let result: BTreeMap<u32, String> = result
+        let result: BTreeMap<u32, i64> = result
             .into_iter()
-            .map(|(key, value)| (key, to_fixed_point_decimal(value).to_string()))
+            .map(|(key, value)| (key, to_fixed_point_decimal(value)))
             .collect();
         results.insert(neuron.name(), result);
     }
     results
 }
 
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-fn to_fixed_point_decimal(val: f64) -> i128 {
-    (val * DECIMALS as f64) as i128
+/// Rounded to the nearest 0.000001, so 0.8 * 44 gives 35.2 and not 35.199999.
+///
+/// # Panics
+///
+/// If the value is not finite or does not fit an i64 at 6 decimals (about
+/// 9.2 trillion).
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn to_fixed_point_decimal(val: f64) -> i64 {
+    let scaled = (val * DECIMALS as f64).round();
+    assert!(
+        scaled.is_finite() && scaled.abs() < i64::MAX as f64,
+        "{val} does not fit an i64 with 6 decimals"
+    );
+    scaled as i64
 }

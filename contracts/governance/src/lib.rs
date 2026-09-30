@@ -5,9 +5,8 @@ extern crate alloc;
 
 use crate::fixed_mul_floor::fixed_mul_floor;
 use alloc::string::ToString;
-// use soroban_fixed_point_math::SorobanFixedPoint;
 use soroban_sdk::{
-    Address, BytesN, ContractExecutable, Env, I256, Map, String, Vec, contract, contractimpl,
+    Address, BytesN, ContractExecutable, Env, Map, String, Vec, contract, contractimpl,
     contracttype,
 };
 
@@ -34,7 +33,9 @@ mod neural_governance;
 mod storage;
 pub mod types;
 
-pub const DECIMALS: i128 = 1_000_000_000_000_000_000;
+/// Neuron results, weights and voting powers are `i64` fixed point numbers
+/// with 6 decimals: 1.0 is `1_000_000`, the largest value about 9.2 trillion.
+pub const DECIMALS: i64 = 1_000_000;
 
 #[contract]
 pub struct VotingSystem;
@@ -117,12 +118,13 @@ impl VotingSystem {
         write_membership_contract(&env, &membership_contract);
     }
 
-    /// Get the voting power (NQG score) of a member for the active round.
+    /// Get the voting power (NQG score) of a member for the active round,
+    /// with 6 decimals.
     ///
     /// # Arguments
     ///
     /// * `member_id`: the member's Stellar Membership token id.
-    pub fn get_voting_power_for_user(env: Env, member_id: u32) -> Result<I256, VotingSystemError> {
+    pub fn get_voting_power_for_user(env: Env, member_id: u32) -> Result<i64, VotingSystemError> {
         match read_voting_powers(&env, Self::get_current_round(&env)) {
             Ok(voting_powers) => {
                 if let Some(voting_power) = voting_powers.get(member_id) {
@@ -155,7 +157,7 @@ impl Admin for VotingSystem {
 impl Governance for VotingSystem {
     fn add_layer(
         env: Env,
-        raw_neurons: Vec<(String, I256)>,
+        raw_neurons: Vec<(String, i64)>,
         layer_aggregator: LayerAggregator,
     ) -> Result<(), VotingSystemError> {
         require_admin(&env);
@@ -210,7 +212,7 @@ impl Governance for VotingSystem {
         layer_id: String,
         neuron_id: String,
         round: u32,
-    ) -> Result<Map<u32, I256>, VotingSystemError> {
+    ) -> Result<Map<u32, i64>, VotingSystemError> {
         read_neuron_result(env, &layer_id, &neuron_id, round)
     }
 
@@ -218,7 +220,7 @@ impl Governance for VotingSystem {
         env: &Env,
         layer_id: String,
         neuron_id: String,
-    ) -> Result<Map<u32, I256>, VotingSystemError> {
+    ) -> Result<Map<u32, i64>, VotingSystemError> {
         Self::get_neuron_result_round(env, layer_id, neuron_id, Self::get_current_round(env))
     }
 
@@ -226,7 +228,7 @@ impl Governance for VotingSystem {
         env: Env,
         layer_id: String,
         neuron_id: String,
-        result: Map<u32, I256>,
+        result: Map<u32, i64>,
     ) -> Result<(), VotingSystemError> {
         require_admin(&env);
         require_members(&env, &result)?;
@@ -244,14 +246,14 @@ impl Governance for VotingSystem {
     /// Get a result of a whole layer
     ///
     /// Gets a result of each neuron and aggregates them using a configured aggregator function
-    fn get_layer_result(env: Env, layer_id: String) -> Result<Map<u32, I256>, VotingSystemError> {
+    fn get_layer_result(env: Env, layer_id: String) -> Result<Map<u32, i64>, VotingSystemError> {
         let layer = read_layer(&env, &layer_id)?;
-        let mut result: Map<u32, Vec<I256>> = Map::new(&env);
+        let mut result: Map<u32, Vec<i64>> = Map::new(&env);
 
         for neuron_id in layer.neurons {
             let neuron_result = Self::get_neuron_result(&env, layer_id.clone(), neuron_id.clone())?;
             let neuron = read_neuron(&env, &layer_id, &neuron_id)?;
-            let neuron_result = weigh_neuron_result(&env, &neuron.weight, neuron_result);
+            let neuron_result = weigh_neuron_result(&env, neuron.weight, neuron_result)?;
             for (user, new) in neuron_result {
                 let mut previous = result.get(user).unwrap_or_else(|| Vec::new(&env));
                 previous.push_back(new);
@@ -259,12 +261,7 @@ impl Governance for VotingSystem {
             }
         }
 
-        Ok(aggregate_result(
-            &env,
-            result,
-            layer.aggregator,
-            I256::from_i128(&env, DECIMALS),
-        ))
+        aggregate_result(&env, result, layer.aggregator, DECIMALS)
     }
 
     fn calculate_voting_powers(env: Env) -> Result<(), VotingSystemError> {
@@ -273,8 +270,7 @@ impl Governance for VotingSystem {
         let neural_governance = read_neural_governance(&env).unwrap();
         let layers = neural_governance.layers;
         let layer_count = layers.len();
-        let zero = I256::from_i32(&env, 0);
-        let mut result: Map<u32, I256> = Map::new(&env);
+        let mut result: Map<u32, i64> = Map::new(&env);
         let mut expected_users = 0u32;
 
         for (layer_idx, layer_id) in (0u32..).zip(layers.iter()) {
@@ -286,12 +282,10 @@ impl Governance for VotingSystem {
             }
             let is_last_layer = layer_idx + 1 == layer_count;
             for (key, value) in layer_result.iter() {
-                let summed = value.add(&result.get(key).unwrap_or_else(|| I256::from_i32(&env, 0)));
-                let voting_power = if is_last_layer && summed < zero {
-                    zero.clone()
-                } else {
-                    summed
-                };
+                let summed = value
+                    .checked_add(result.get(key).unwrap_or(0))
+                    .ok_or(VotingSystemError::ArithmeticOverflow)?;
+                let voting_power = if is_last_layer { summed.max(0) } else { summed };
                 result.set(key, voting_power);
             }
         }
@@ -304,7 +298,7 @@ impl Governance for VotingSystem {
         Ok(())
     }
 
-    fn get_voting_powers(env: Env) -> Result<Map<u32, I256>, VotingSystemError> {
+    fn get_voting_powers(env: Env) -> Result<Map<u32, i64>, VotingSystemError> {
         read_voting_powers(&env, Self::get_current_round(&env))
     }
 
@@ -317,7 +311,7 @@ impl Governance for VotingSystem {
 fn create_or_update_layer(
     env: Env,
     layer_id: String,
-    raw_neurons: Vec<(String, I256)>,
+    raw_neurons: Vec<(String, i64)>,
     layer_aggregator: LayerAggregator,
 ) {
     let mut neural_governance = read_neural_governance(&env).unwrap();
@@ -340,18 +334,20 @@ fn create_or_update_layer(
     write_neural_governance(&env, neural_governance);
 }
 
-fn weigh_neuron_result(env: &Env, weight: &I256, result: Map<u32, I256>) -> Map<u32, I256> {
+fn weigh_neuron_result(
+    env: &Env,
+    weight: i64,
+    result: Map<u32, i64>,
+) -> Result<Map<u32, i64>, VotingSystemError> {
     let mut scaled = Map::new(env);
 
     for (key, value) in result {
-        scaled.set(
-            key,
-            // value.fixed_mul_floor(env, weight, &I256::from_i128(env, DECIMALS)),
-            fixed_mul_floor(env, &value, weight, &I256::from_i128(env, DECIMALS)),
-        );
+        let weighted = fixed_mul_floor(value, weight, DECIMALS)
+            .ok_or(VotingSystemError::ArithmeticOverflow)?;
+        scaled.set(key, weighted);
     }
 
-    scaled
+    Ok(scaled)
 }
 
 fn next_layer_id(env: &Env) -> u32 {

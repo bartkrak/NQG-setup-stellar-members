@@ -18,7 +18,7 @@ The NQG contract only computes voting powers (NQG scores). It does not collect o
 Every id must be an active member (minted and not revoked) of the membership contract you point the NQG contract at. Adjust the list to the members that exist on your membership contract.
 
 ## Neurons
-Neurons are used to calculate component values of voting power. We input some data into each neuron, and it outputs a numeric value. Output values are converted to fixed point decimal values (18 decimals) to ensure no precision loss while converting data between different formats. Then the results of all neurons have to be uploaded to the NQG contract, which will use this data to calculate the final voting power.
+Neurons are used to calculate component values of voting power. We input some data into each neuron, and it outputs a numeric value. Output values are converted to fixed point integers with 6 decimals (1.0 is `1000000`), the `i64` format the contract stores, so no precision is lost between formats. Then the results of all neurons have to be uploaded to the NQG contract, which will use this data to calculate the final voting power.
 
 Why not upload all data into the contract and calculate all values there?
 Doing so would be beneficial for transparency of the whole system, but comes with 2 problems:
@@ -43,13 +43,13 @@ In the `data` folder you'll see `neurons_output.json`, one map per neuron from t
 ```json
 {
   "Neuron1": {
-    "0": "15000000000000000000",
-    "1": "30000000000000000000"
+    "0": 15000000,
+    "1": 30000000
   }
 }
 ```
 
-JSON object keys are always strings, so ids are written as `"0"`, `"1"`, ...; the stellar CLI parses them back into the contract's `u32` keys. Now that we have the neurons results we can move on to the on-chain part of the system.
+JSON object keys are always strings, so ids are written as `"0"`, `"1"`, ...; the stellar CLI parses them back into the contract's `u32` keys. Values are plain JSON numbers. Now that we have the neurons results we can move on to the on-chain part of the system.
 
 ## NQG Contract
 The NQG contract is used to calculate voting powers of members based on the supplied neurons results. Source code for it is located in `/contracts/governance`.
