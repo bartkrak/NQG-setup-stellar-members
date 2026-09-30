@@ -62,7 +62,7 @@ Before uploading anything, check that every id in `data/voters.json` is an activ
 
 `./scripts/membership_check_voters.sh`
 
-It calls `owner_of` on the membership contract for each id and exits with an error if any id was never minted or is revoked.
+It reads `member(token_id).status` on the membership contract for each id and exits with an error if any id was never minted or is revoked.
 
 ### Deploying and initializing the contract
 This script will compile, deploy and initialize the NQG contract with your account as the admin, the round from `.env` and the membership contract. It also sets up the layers (more about layers see `Uploading neurons results`). After deployment the address of the contract will be saved in the .env file for future use.
@@ -84,7 +84,7 @@ After uploading neurons, we can trigger the calculation of voting powers. This f
 `./scripts/governance_calculate_voting_powers.sh`
 
 ### Reading voting powers
-The scores for the current round can be read with `get_voting_powers` (all members) or `get_voting_power_for_id` (one member, by token id). This is also how other contracts, such as the membership contract, read a member's NQG score.
+The scores for the current round can be read with `get_voting_powers` (all members) or `get_voting_power_for_user` (one member, by token id). This is also how other contracts, such as the membership contract, read a member's NQG score.
 
 `./scripts/governance_get_voting_powers.sh`
 

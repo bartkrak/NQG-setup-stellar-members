@@ -122,7 +122,7 @@ impl VotingSystem {
     /// # Arguments
     ///
     /// * `member_id`: the member's Stellar Membership token id.
-    pub fn get_voting_power_for_id(env: Env, member_id: u32) -> Result<I256, VotingSystemError> {
+    pub fn get_voting_power_for_user(env: Env, member_id: u32) -> Result<I256, VotingSystemError> {
         match read_voting_powers(&env, Self::get_current_round(&env)) {
             Ok(voting_powers) => {
                 if let Some(voting_power) = voting_powers.get(member_id) {

@@ -60,7 +60,7 @@ fn set_membership_contract_requires_admin() {
 /// one more member minted. Returns the newcomer's id.
 fn revoke_and_mint(env: &Env, contract_client: &VotingSystemClient) -> u32 {
     let members = MockMembershipClient::new(env, &contract_client.get_membership_contract());
-    members.revoke(&2);
+    members.revoke(&2, &true);
     let newcomer = members.mint(&Address::generate(env));
     assert_eq!(newcomer, MEMBERS);
     newcomer
@@ -84,8 +84,8 @@ fn neuron_results_take_only_active_members() {
         accepted
     );
 
-    // A revoked member, then an id never minted: the whole map is refused
-    // and the stored result stays
+    // A revoked member (which still has an owner), then an id never minted:
+    // the whole map is refused and the stored result stays
     for rejected_id in [2, 42] {
         let mut rejected = Map::new(&env);
         rejected.set(1, I256::from_i128(&env, 300));
@@ -102,4 +102,14 @@ fn neuron_results_take_only_active_members() {
             accepted
         );
     }
+
+    // Reinstated, member 2 is accepted again
+    MockMembershipClient::new(&env, &contract_client.get_membership_contract()).revoke(&2, &false);
+    let mut reinstated = Map::new(&env);
+    reinstated.set(2, I256::from_i128(&env, 500));
+    contract_client.set_neuron_result(&layer0, &neuron0, &reinstated);
+    assert_eq!(
+        contract_client.get_neuron_result(&layer0, &neuron0),
+        reinstated
+    );
 }

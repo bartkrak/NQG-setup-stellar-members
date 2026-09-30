@@ -64,7 +64,7 @@ fn voting_powers_from_weighted_neurons() {
     expected.set(user3, I256::from_i128(&env, (300 * 2 + 3000) * DECIMALS));
     assert_eq!(contract_client.get_voting_powers(), expected);
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user2),
+        contract_client.get_voting_power_for_user(&user2),
         I256::from_i128(&env, (200 * 2 + 2000) * DECIMALS)
     );
 }
@@ -127,7 +127,7 @@ fn calculate_voting_powers_requires_admin() {
     }]);
     contract_client.calculate_voting_powers();
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user),
+        contract_client.get_voting_power_for_user(&user),
         I256::from_i128(&env, 100 * DECIMALS)
     );
 }
@@ -188,7 +188,7 @@ fn set_bump_round_flow() {
     );
     contract_client.calculate_voting_powers();
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user1),
+        contract_client.get_voting_power_for_user(&user1),
         I256::from_i128(&env, 100)
     );
 
@@ -224,7 +224,7 @@ fn set_bump_round_flow() {
     );
     contract_client.calculate_voting_powers();
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user1),
+        contract_client.get_voting_power_for_user(&user1),
         I256::from_i128(&env, 5000)
     );
 
@@ -236,7 +236,7 @@ fn set_bump_round_flow() {
 }
 
 #[test]
-fn get_voting_power_for_id() {
+fn get_voting_power_for_user() {
     let env = Env::default();
     env.cost_estimate().budget().reset_unlimited();
 
@@ -289,17 +289,17 @@ fn get_voting_power_for_id() {
     contract_client.calculate_voting_powers();
     // Verify correct voting powers are returned for each user
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user1),
+        contract_client.get_voting_power_for_user(&user1),
         I256::from_i32(&env, 322)
     );
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user2),
+        contract_client.get_voting_power_for_user(&user2),
         I256::from_i32(&env, 533)
     );
     // Verify error is returned for invalid user
     assert_eq!(
         contract_client
-            .try_get_voting_power_for_id(&99)
+            .try_get_voting_power_for_user(&99)
             .unwrap_err()
             .unwrap(),
         VotingSystemError::NGQResultForVoterMissing
@@ -359,15 +359,15 @@ fn calculate_voting_powers_clamps_negative_nqg_to_zero() {
     contract_client.calculate_voting_powers();
 
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_negative),
+        contract_client.get_voting_power_for_user(&user_negative),
         I256::from_i32(&env, 0)
     );
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_positive),
+        contract_client.get_voting_power_for_user(&user_positive),
         I256::from_i32(&env, 500)
     );
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_recovers),
+        contract_client.get_voting_power_for_user(&user_recovers),
         I256::from_i32(&env, 200)
     );
 }
@@ -450,11 +450,11 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
     contract_client.calculate_voting_powers();
 
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_negative),
+        contract_client.get_voting_power_for_user(&user_negative),
         I256::from_i32(&env, 0)
     );
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_positive),
+        contract_client.get_voting_power_for_user(&user_positive),
         I256::from_i32(&env, 500)
     );
 }

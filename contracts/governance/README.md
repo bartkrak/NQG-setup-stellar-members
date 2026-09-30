@@ -17,7 +17,7 @@ Voters are identified by their Stellar Membership token id
 membership contract, and ids that are not active members are rejected.
 
 The contract only computes NQG. It does not count votes: other contracts and apps read the scores through
-`get_voting_power_for_id(member_id)` or `get_voting_powers()`.
+`get_voting_power_for_user(member_id)` or `get_voting_powers()`.
 
 ## Interface
 
@@ -31,7 +31,7 @@ Voter ids are plain `u32` Stellar Membership token ids. Scores are `I256` fixed 
 | `remove_layer(layer_id)` | admin | Removes a layer and its neurons. |
 | `set_neuron_result(layer_id, neuron_id, result: Map<u32, I256>)` | admin | Stores one neuron's results for the active round. Every key must be an active member, see below. |
 | `calculate_voting_powers()` | admin | Runs all layers over the active round's neuron results and stores the voting powers for that round. |
-| `get_voting_power_for_id(member_id: u32) -> I256` | anyone | Voting power (NQG score) of one member for the active round. |
+| `get_voting_power_for_user(member_id: u32) -> I256` | anyone | Voting power (NQG score) of one member for the active round. |
 | `get_voting_powers() -> Map<u32, I256>` | anyone | Voting powers of all members for the active round. |
 | `set_current_round(round)` / `get_current_round()` | admin / anyone | Switches the active round. Data of other rounds is kept. |
 | `set_membership_contract(address)` / `get_membership_contract()` | admin / anyone | Points the contract at another Stellar Membership contract. |
@@ -42,10 +42,10 @@ Voter ids are plain `u32` Stellar Membership token ids. Scores are `I256` fixed 
 
 | Code | Name | When |
 |---|---|---|
-| 0 | `UnknownError` | `get_voting_power_for_id` before voting powers were calculated for the active round. |
+| 0 | `UnknownError` | `get_voting_power_for_user` before voting powers were calculated for the active round. |
 | 7 | `NeuronResultNotSet` | `calculate_voting_powers` when a neuron of a layer has no result for the active round. |
 | 9, 10 | `LayerMissing`, `NeuronMissing` | Unknown layer or neuron id. |
-| 11 | `NGQResultForVoterMissing` | `get_voting_power_for_id` for a member without a score this round. |
+| 11 | `NGQResultForVoterMissing` | `get_voting_power_for_user` for a member without a score this round. |
 | 15 | `VotingPowersNotSet` | `get_voting_powers` before voting powers were calculated for the active round. |
 | 17 | `LayerResultsUsersMismatch` | `calculate_voting_powers` when layers do not cover the same members. |
 | 18 | `NotAMember` | `set_neuron_result` with an id that is not an active member. |
@@ -54,39 +54,20 @@ Voter ids are plain `u32` Stellar Membership token ids. Scores are `I256` fixed 
 
 The two contracts point at each other:
 
-- **NQG reads the membership contract** to validate voters. `set_neuron_result` calls `owner_of(token_id)` for every
-  key of the uploaded map. Success means the token exists and is active; any failure (`NonExistentToken`,
-  `TokenRevoked`, or a contract that cannot answer) rejects the whole upload with `NotAMember` and nothing is written.
-  `owner_of` is the only membership function NQG calls, so its "panics if the token does not exist or is revoked"
-  behaviour is the contract between the two.
+- **NQG reads the membership contract** to validate voters. `set_neuron_result` calls `member(token_id)` for every
+  key of the uploaded map and requires `status` to be `0` (Active). A revoked token (`status` `1`), a token never
+  minted (`NonExistentToken`), or a contract that cannot answer rejects the whole upload with `NotAMember`, and
+  nothing is written. Only `status` is read from the record, so changes to its other fields do not affect NQG.
+  `owner_of` is not used: it succeeds for revoked tokens.
 - **The membership contract reads NQG** to show a member's score (`governance(token_id)`, `trait_value(token_id,
-  "nqg")`). It calls `get_voting_power_for_id(token_id)` and scales the 18 decimal result down to its 6 decimals.
+  "nqg")`). Its `get_nqg` calls `get_voting_power_for_user(token_id: u32) -> I256` and scales the 18 decimal result
+  down to its 6 decimals. Any failure, including a member without a score this round, reads as 0.
 
 Neither call re-enters the other contract, so there is no reentrancy at runtime.
 
-### Change needed in the membership contract
-
-`get_nqg` in `contracts/stellar-membership/src/governance.rs` currently calls the old function name with the owner's
-address as a string. It has to call `get_voting_power_for_id` with the token id instead (add `IntoVal` to the
-`soroban_sdk` imports):
-
-```rust
-fn get_nqg(e: &Env, token_id: u32) -> i128 {
-    // Kept so a revoked or unknown token still panics, as `trait_value` and `governance` document.
-    StellarMembership::owner_of(e, token_id);
-
-    let r = e.try_invoke_contract::<I256, InvokeError>(
-        &StellarMembership::nqg_contract(e),
-        &Symbol::new(e, "get_voting_power_for_id"),
-        vec![e, token_id.into_val(e)],
-    );
-    // ...scaling unchanged
-}
-```
-
-Because the score is keyed by token id, it now survives `rotate_key` and `recover`: the test asserting that the score
-drops to 0 after a key rotation should assert it stays the same. The NQG test mock (`src/tests/utils.rs`, module
-`nqg`) should take a `u32` token id instead of a `String`.
+Because the score is keyed by token id, it survives `rotate_key` and `recover`. The membership contract may still
+show 0 for a while after a key moves (its voting power hold, `held_until` in `governance`); that is its own rule, NQG
+keeps returning the score.
 
 ### Deploying the pair
 
@@ -106,6 +87,10 @@ instead of redeploying NQG.
 This runs the whole flow on a local network in Docker: members are minted on the membership contract, neuron results
 are uploaded for them, and the membership contract returns their NQG scores. It uses the scripts from
 [`examples`](../../examples/README.md). You need the stellar CLI, Docker and `jq`.
+
+The stellar CLI loads a `.env` from the current folder or any parent, and a `STELLAR_RPC_URL` there overrides
+`--network local`. If you keep one (for example for testnet), check with `stellar env` before starting, or the
+commands below may go to that network instead.
 
 **1. Start the network and create identities.**
 
@@ -162,8 +147,7 @@ MEMBERSHIP_CONTRACT_ADDRESS=<the $MEMBERSHIP address from step 2>
 
 The last script should print `"113000000000000000000"` (113.0) for member `0`.
 
-**5. Connect the membership contract to NQG and read a score through it.** This needs the membership contract with
-the `get_nqg` change above; the current one calls the old function and reads 0.
+**5. Connect the membership contract to NQG and read a score through it.**
 
 ```bash
 source .env
@@ -173,26 +157,30 @@ stellar contract invoke --network local --source-account mem-admin --id $MEMBERS
   --send=no -- governance --token_id 0
 ```
 
-`nqg` should be `113000000` (113.0 at 6 decimals).
+The result should be `{"held_until":0,"nqg":"113000000","role":0}`: 113.0 at 6 decimals.
 
 **6. Check that validation follows membership.** Revoke a member and upload again:
 
 ```bash
 stellar contract invoke --network local --source-account m2 --id $MEMBERSHIP_CONTRACT_ADDRESS \
-  -- revoke --operator m2 --token_id 2
-./scripts/membership_check_voters.sh               # 2 is reported as not active
+  -- revoke --operator m2 --token_id 2 --revoked
+./scripts/membership_check_voters.sh               # 2 is reported as revoked
 ./scripts/governance_upload_neurons_results.sh     # each upload fails with Error(Contract, #18), NotAMember
 ```
 
+`--revoked` is a bool flag: without it the call reinstates the token, which for an active member changes nothing.
+
 Clean up with `stellar container stop local`.
+
+`examples/scripts/e2e_testnet.sh` runs this whole flow on testnet, or locally, with a pass or fail for each check.
 
 ### Things to know
 
-- **Only the active round is served.** `get_voting_power_for_id` and `get_voting_powers` read the round set by
+- **Only the active round is served.** `get_voting_power_for_user` and `get_voting_powers` read the round set by
   `set_current_round`. Moving to a new round makes scores read as missing until `calculate_voting_powers` runs for it.
 - **Validation happens at upload time.** A member revoked after their results were uploaded keeps their score for that
-  round. The membership contract still refuses to show it, because `get_nqg` calls `owner_of` first.
-- **One membership read per voter.** Each uploaded id costs one `owner_of` call, and a transaction has a ledger read
+  round in NQG. The membership contract shows 0 for a revoked member regardless.
+- **One membership read per voter.** Each uploaded id costs one `member` call, and a transaction has a ledger read
   limit, so a single `set_neuron_result` covers a limited number of members. Fine for small rounds; large rounds will
   need a different approach.
 - **Storage lifetimes are not extended.** Neuron results live in temporary storage and expire if

@@ -187,7 +187,7 @@ expected_power() {
 
 for id in $VOTERS; do
   EXPECTED=$(expected_power "$id")
-  ACTUAL=$(read_only "$NQG" get_voting_power_for_id --member_id "$id" | unquote)
+  ACTUAL=$(read_only "$NQG" get_voting_power_for_user --member_id "$id" | unquote)
   if [ "$ACTUAL" = "$EXPECTED" ]; then
     pass "member $id has voting power $ACTUAL"
   else
@@ -196,7 +196,7 @@ for id in $VOTERS; do
 done
 
 # governance(token_id).nqg is the power scaled to 6 decimals. A membership
-# build without the get_nqg change reads 0: a warning, not a failure.
+# build that does not read NQG by token id shows 0: a warning, not a failure.
 
 step "6. Connect membership to NQG and read scores through it"
 
@@ -220,18 +220,21 @@ for id in $VOTERS; do
   fi
 done
 if [ "$MEMBERSHIP_UPDATED" = false ]; then
-  echo "WARN: scores read as 0 through the membership contract. Most likely the"
-  echo "      membership build still calls get_voting_power_for_user; see"
-  echo "      contracts/governance/README.md, 'Change needed in the membership contract'."
+  echo "WARN: scores read as 0 through the membership contract. Its get_nqg must"
+  echo "      call get_voting_power_for_user with the token id; see"
+  echo "      contracts/governance/README.md, 'Connecting to Stellar Membership'."
 fi
 
 step "7. Revoke member $REVOKED_ID and check NQG refuses it"
 
-if send "$KEY_PREFIX-m$REVOKED_ID" "$MEMBERSHIP" revoke \
-  --operator "$KEY_PREFIX-m$REVOKED_ID" --token_id "$REVOKED_ID" >/dev/null 2>&1; then
+# --revoked is a bool flag: without it the call reinstates, a silent no-op.
+send "$KEY_PREFIX-m$REVOKED_ID" "$MEMBERSHIP" revoke \
+  --operator "$KEY_PREFIX-m$REVOKED_ID" --token_id "$REVOKED_ID" --revoked >/dev/null 2>&1
+STATUS=$(read_only "$MEMBERSHIP" member --token_id "$REVOKED_ID" | jq -r '.status')
+if [ "$STATUS" = "1" ]; then
   pass "revoked member $REVOKED_ID"
 else
-  fail "revoke failed"
+  abort "member $REVOKED_ID still has status '$STATUS' after revoke"
 fi
 
 if ./scripts/membership_check_voters.sh >/dev/null 2>&1; then
