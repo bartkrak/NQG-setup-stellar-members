@@ -1,13 +1,12 @@
 use anyhow::Result;
-use methods::PRIOR_VOTING_HISTORY_GUEST_ELF;
-use prior_voting_history_core::Input;
 use risc0_zkvm::{ExecutorEnv, ExternalProver, Prover, Receipt};
+use serde::Serialize;
 
-pub fn prove(input: &Input) -> Result<Receipt> {
+pub fn prove(input: &impl Serialize, elf: &[u8]) -> Result<Receipt> {
     let env = ExecutorEnv::builder().write(input)?.build()?;
     let prover = ExternalProver::new("local", "r0vm");
 
-    let receipt = prover.prove(env, PRIOR_VOTING_HISTORY_GUEST_ELF)?.receipt;
+    let receipt = prover.prove(env, elf)?.receipt;
 
     Ok(receipt)
 }

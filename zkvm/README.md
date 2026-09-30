@@ -1,14 +1,14 @@
 # Neuron proofs with RISC Zero
 
 Generate a zero-knowledge proof of a neuron's calculation and verify its public
-result without sharing the private voting history. The current implementation
-supports the **prior voting history** neuron.
+result without sharing the private input. Supports **prior voting history** and
+**assigned reputation**, each with its own core crate, guest, and Image ID.
 
 There are two command-line programs:
 
 - **`host`** reads a private JSON input and generates a receipt using a local prover.
 - **`verifier`** checks a receipt against an independently approved Image ID and
-  prints the verified round and scores.
+  prints the verified neuron output as JSON.
 
 A **guest** is the program executed inside the RISC Zero zkVM. Its **Image ID**
 identifies the compiled program. It depends only on the source code and the
@@ -16,116 +16,44 @@ build environment, never on the input. A **receipt** contains a cryptographic
 proof and its public output (the **journal**).
 
 
-## Three separate checks
+## Local build and proving
 
-| Check | What it establishes | Needs | Status |
-| --- | --- | --- | --- |
-| Reproduce the Image ID from source | The published source compiles to this Image ID | Git, Rust, Docker with Buildx | Available |
-| Verify a proof | A receipt was produced by the program with a given Image ID and carries this journal | Rust (to build `verifier`), the receipt, the approved Image ID | Available for local receipts |
-| Read the approved Image ID on-chain | Which Image ID the application contract accepts | Stellar tooling, the contract address | Not yet available: no contract |
+The workspace contains `core/prior-voting-history/` and
+`core/assigned-reputation/` for each neuron's types and scoring, two guests in
+`methods/`, one `host/`, and the standalone `verifier/`. 
 
-The checks are independent. Reproducing the Image ID needs no proof and no private
-input; verifying a proof needs no Docker or guest compiler. Only the
-combination links a published source to an accepted result.
+The verifier keeps argument parsing in `cli.rs`, journal decoding in `journal.rs`,
+and cryptographic verification in `lib.rs`. Its `main.rs` only coordinates those
+steps and prints the result.
 
-### Release process
-
-1. A source revision is published (a Git tag) and its Image ID is approved in the
-   application contract.
-2. The administrator builds that revision with
-   [scripts/build-reproducible.sh](scripts/build-reproducible.sh), checks the
-   printed ID against the approved one, and generates proofs from the private
-   voting history.
-3. The contract accepts a result only if the proof is valid for the approved
-   Image ID and its journal matches the submitted result.
-4. Anyone can rebuild the published revision and compare the Image ID with the
-   one read from the contract.
-
-
-## Reproduce the Image ID
-
-This is the same step for independent reviewers and for the administrator.
-
-### 1. Install the tools
-
-You need **Git**, **Rust** through [rustup](https://rustup.rs) (the host toolchain
-is selected automatically from [rust-toolchain.toml](rust-toolchain.toml)), and a
-running **Docker with the Buildx plugin**. RISC Zero tools (`rzup`, `r0vm`, the
-RISC Zero Rust toolchain) and the private input are **not** needed: the guest is
-compiled inside the pinned builder image.
-
-Buildx is required because RISC Zero exports the compiled guest with `docker
-build --output`, which the legacy builder does not support. Check it with
-`docker buildx version`.
-
-**macOS**: [Docker Desktop](https://docs.docker.com/desktop/) or
-[OrbStack](https://orbstack.dev) include Buildx. With Colima, add the plugin
-once:
+Use Rust via rustup, the RISC Zero Rust guest toolchain installed through `rzup`,
+and `r0vm` 3.0.6. With those tools installed, run from the repository root:
 
 ```sh
-brew install git colima docker docker-buildx
-mkdir -p ~/.docker/cli-plugins
-ln -sfn "$(brew --prefix)/opt/docker-buildx/bin/docker-buildx" ~/.docker/cli-plugins/docker-buildx
+cargo build --release --locked --manifest-path zkvm/Cargo.toml -p host -p verifier
+
+mkdir -p zkvm/artifacts
+
+zkvm/target/release/host image-id --neuron prior-voting-history
+
+zkvm/target/release/host prove --neuron prior-voting-history \
+  --input zkvm/data/example_prior_voting_history.json \
+  --receipt zkvm/artifacts/prior.bin
+
+zkvm/target/release/verifier verify --neuron prior-voting-history \
+  --receipt zkvm/artifacts/prior.bin --image-id "<APPROVED_PRIOR_IMAGE_ID>"
 ```
 
-Run `colima start` before building.
-
-**Linux**: install [Docker Engine](https://docs.docker.com/engine/install/) from
-docker.com; its packages include Buildx. 
-
-Also install a C toolchain for the host build, for example
-`sudo apt install -y git build-essential` on Debian/Ubuntu.
-
-**Windows**: use WSL 2, not native Windows. The script needs Bash, and RISC Zero
-tools do not support native Windows. In PowerShell as administrator:
-
-```powershell
-wsl --install -d Ubuntu
-```
-
-Install Docker Desktop and enable WSL integration for the Ubuntu distribution,
-or install Docker Engine inside Ubuntu as on Linux. Then follow the Linux steps
-in the Ubuntu terminal. Clone the repository inside the Linux file system (for
-example under `~`), not under `/mnt/c`, which is much slower.
-
-### 2. Build and compare
-
-```sh
-zkvm/scripts/build-reproducible.sh "<APPROVED_IMAGE_ID>"
-```
-
-The script prints the Image ID, then `Image ID matches the approved value.` Omit
-the argument to print the ID only. A mismatch exits with an error. The first build
-downloads the builder image (over 1 GB) and can take several minutes.
-
-The guest is recompiled in the container on every run, so the printed ID always
-comes from the current source. The script also produces the native host at
-`zkvm/target/reproducible/release/host`, which contains exactly that guest.
-
-### What is pinned
-
-- the source revision, including [Cargo.lock](Cargo.lock) and the guest's
-  [Cargo.lock](methods/prior-voting-history-guest/Cargo.lock);
-- RISC Zero SDK `3.0.6` (`risc0-build`, `risc0-zkvm`);
-- the guest builder image `risczero/risc0-guest-builder`, pinned by digest in
-  [methods/build.rs](methods/build.rs). The digest selects a single
-  `linux/amd64` image.
-
-The host toolchain and the Docker installation do not enter the guest binary.
-An earlier Podman flow produced the same Image ID for two builds from different
-source paths on one Apple Silicon Mac. This script's Docker flow, Linux, and WSL
-have not been confirmed yet. Publish the source tag, builder image digest, and
-Image ID for each approved release.
-
-Keep real private history outside `zkvm/`: the whole directory is sent to
-Docker as the build context, and Git ignores do not exclude files from it.
-
+The host always uses local `r0vm`. Development receipts are disabled. The verifier
+rejects fake receipts explicitly, verifies the supplied Image ID independently of
+neuron selection, then decodes the journal as the selected output type. It has no
+guest build dependency and can be built by itself with `-p verifier`.
 
 ## Generate a proof
 
-For the administrator. Build the host as described in
-[Reproduce the Image ID](#reproduce-the-image-id), passing the approved ID so
-that proofs are generated only by the approved program.
+Build the host as described in [Local build and proving](#local-build-and-proving).
+Compare the selected guest's `host image-id --neuron ...` output with its
+independently approved Image ID before generating proofs.
 
 ### 1. Install the prover
 
@@ -142,7 +70,7 @@ versions are installed, select this one with `rzup use r0vm 3.0.6`.
 
 ### 2. Prepare the private input
 
-Start with [data/example_input.json](data/example_input.json). It contains synthetic example data.
+Start with [data/example_prior_voting_history.json](data/example_prior_voting_history.json). It contains synthetic example data.
 
 The input has five required fields:
 
@@ -166,15 +94,15 @@ full activity; from round 32 onward, activity is `max(active votes / submissions
 zero for non-authors. Only `Yes` and `No` count as active votes.
 
 The original logistic weighting and final bonus curve remain in
-[neuron.rs](prior-voting-history-core/src/neuron.rs). Rounds are processed from 1
+[neuron.rs](core/prior-voting-history/src/neuron.rs). Rounds are processed from 1
 through `currentRound`; generation time increases with the computation workload.
 
 ### 3. Generate the receipt locally
 
 ```sh
 mkdir -p zkvm/artifacts
-zkvm/target/reproducible/release/host prove \
-  --input zkvm/data/example_input.json \
+zkvm/target/release/host prove \
+  --input zkvm/data/example_prior_voting_history.json \
   --receipt zkvm/artifacts/receipt.bin
 ```
 
@@ -186,9 +114,8 @@ The command prints `Proof generated in ...s` and saves the binary receipt.
 **It does not run a separate verification step.** It also does not overwrite an
 existing receipt: choose a new filename for each run. Parent directories must exist.
 
-Proving can take several minutes. The receipt is a local RISC Zero receipt, not
-yet a payload accepted by a Stellar contract; see
-[Planned Stellar / Soroban integration](#planned-stellar--soroban-integration).
+Proving can take several minutes. This workflow produces a local RISC Zero
+receipt for verification with the standalone verifier.
 
 
 ## Verify a received proof
@@ -199,9 +126,9 @@ yet a payload accepted by a Stellar contract; see
 cargo build --release --locked --manifest-path zkvm/Cargo.toml -p verifier
 ```
 
-Keep `-p verifier`: the default workspace build selects `host` and builds its guest.
-The verifier package does not depend on the guest build package, so no container
-engine or RISC Zero tools are needed.
+Keep `-p verifier`: the default workspace build selects `host` and builds both guests.
+The verifier package does not depend on the guest build package, so neither the
+RISC Zero guest toolchain nor `r0vm` is needed for verification.
 
 ### 2. Obtain the receipt and approved Image ID
 
@@ -209,8 +136,8 @@ Download the receipt as a binary file, for example to `zkvm/artifacts/receipt.bi
 (create the directory with `mkdir -p zkvm/artifacts`). Generated receipts are
 ignored by Git, so cloning the repository does not provide one.
 
-Take the expected Image ID from the application contract or a release you have
-independently accepted, never from whoever sent the receipt. It must contain
+Take the expected Image ID from a source revision and local build you have
+independently accepted, never solely from whoever sent the receipt. It must contain
 **64 hexadecimal characters**.
 
 ### 3. Verify
@@ -250,8 +177,10 @@ supplied Image ID and binds its public journal to that execution. It does not
 establish that the private history is authentic or complete, or identify its
 provider. This project trusts the history provider for those properties.
 
-The journal exposes only `currentRound` and `scores`. It contains no individual
-votes, participation history, author lists, or input-history commitment. Public
+The prior-voting-history journal exposes only `currentRound` and `scores`; the
+assigned-reputation journal exposes only its person-ID/score pairs in `scores`.
+Neither contains individual votes, participation history, author lists, roles,
+tiers, or an input-data commitment. Public
 scores still reveal information about activity. The binary receipt format itself
 is not encryption.
 

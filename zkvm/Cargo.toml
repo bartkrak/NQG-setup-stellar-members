@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["host", "methods", "prior-voting-history-core", "verifier"]
+members = ["host", "methods", "core/prior-voting-history", "core/assigned-reputation", "verifier"]
 default-members = ["host"]
 
 [profile.dev]

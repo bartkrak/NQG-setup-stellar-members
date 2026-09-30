@@ -8,4 +8,4 @@ publish = false
 risc0-build = "=3.0.6"
 
 [package.metadata.risc0]
-methods = ["prior-voting-history-guest"]
+methods = ["prior-voting-history-guest", "assigned-reputation-guest"]

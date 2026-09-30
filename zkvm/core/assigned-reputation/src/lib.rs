@@ -2,8 +2,8 @@
 // Used by both the host and the zkVM guest, so the proven computation
 // is exactly the same code the host (or anyone else) can run natively.
 //
-// Ported from neurons/src/assigned_reputation.rs; the input schema is adapted
-// to the usersDiscord.json data (tier as i32, roles per user).
+// Ported from neurons/src/assigned_reputation.rs. The host reads Input directly
+// from JSON and passes it to the guest (tier as i32, roles per user).
 
 use serde::{Deserialize, Serialize};
 
@@ -30,19 +30,19 @@ impl ReputationTier {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserRecord {
-    pub public_key: String,
+    pub id: String,
     pub tier: i32,
     pub discord_roles: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NeuronInput {
+pub struct Input {
     pub users: Vec<UserRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NeuronOutput {
-    /// (public_key, bonus) pairs, in the same order as the input users.
+pub struct Output {
+    /// (id, bonus) pairs, in the same order as the input users.
     pub scores: Vec<(String, f64)>,
 }
 
@@ -83,26 +83,26 @@ fn discord_roles_bonus(roles: &[String]) -> f64 {
     roles.iter().map(|role| role_to_bonus(role)).sum()
 }
 
-pub fn calculate_result(input: &NeuronInput) -> NeuronOutput {
+pub fn calculate_result(input: &Input) -> Output {
     let scores = input
         .users
         .iter()
         .map(|user| {
             let bonus = reputation_bonus(ReputationTier::from_i32(user.tier))
                 + discord_roles_bonus(&user.discord_roles);
-            (user.public_key.clone(), bonus)
+            (user.id.clone(), bonus)
         })
         .collect();
-    NeuronOutput { scores }
+    Output { scores }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn user(key: &str, tier: i32, roles: &[&str]) -> UserRecord {
+    fn user(id: &str, tier: i32, roles: &[&str]) -> UserRecord {
         UserRecord {
-            public_key: key.to_string(),
+            id: id.to_string(),
             tier,
             discord_roles: roles.iter().map(|r| r.to_string()).collect(),
         }
@@ -111,24 +111,76 @@ mod tests {
     #[test]
     fn matches_original_neuron_run() {
         // Mirrors the neuron_run test from neurons/src/assigned_reputation.rs
-        let input = NeuronInput {
+        let input = Input {
             users: vec![
-                user("user1", 2, &["SDF", "SCF Project", "Moderator"]),
-                user("user2", 3, &[]),
-                user("user3", 0, &["Public Good Contributor"]),
+                user("52345125252", 2, &["SDF", "SCF Project", "Moderator"]),
+                user("52345125253", 3, &[]),
+                user("52345125254", 0, &["Public Good Contributor"]),
             ],
         };
         let output = calculate_result(&input);
-        assert_eq!(output.scores[0], ("user1".to_string(), 5.0));
-        assert_eq!(output.scores[1], ("user2".to_string(), 3.0));
-        assert_eq!(output.scores[2], ("user3".to_string(), 1.0));
+        assert_eq!(output.scores[0], ("52345125252".to_string(), 5.0));
+        assert_eq!(output.scores[1], ("52345125253".to_string(), 3.0));
+        assert_eq!(output.scores[2], ("52345125254".to_string(), 1.0));
     }
 
     #[test]
     fn unknown_tier_and_roles_give_zero() {
-        let input = NeuronInput {
-            users: vec![user("u", -1, &["unrecognized role"])],
+        let input = Input {
+            users: vec![user("52345125252", -1, &["unrecognized role"])],
         };
         assert_eq!(calculate_result(&input).scores[0].1, 0.0);
+    }
+
+    #[test]
+    fn preserves_zkvm_ambassador_rules_even_where_neurons_differs() {
+        for role in [
+            "West Africa Ambassador",
+            "India Ambassador",
+            "Southern African Ambassador",
+            "East Africa Ambassador",
+            "Europe Ambassador",
+        ] {
+            assert_eq!(
+                calculate_result(&Input {
+                    users: vec![user("52345125252", 0, &[role])],
+                })
+                .scores[0]
+                    .1,
+                0.5,
+                "{role}"
+            );
+        }
+        for role in [
+            "Bolivia Ambassador",
+            "Costa Rica Ambassador",
+            "Peru Ambassador",
+            "Ghana Ambassador",
+            "Nigeria Ambassador",
+        ] {
+            assert_eq!(
+                calculate_result(&Input {
+                    users: vec![user("52345125252", 0, &[role])],
+                })
+                .scores[0]
+                    .1,
+                0.0,
+                "{role}"
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_order_duplicate_roles_and_unknown_tiers() {
+        let output = calculate_result(&Input {
+            users: vec![
+                user("52345125253", 99, &["SDF", "SDF"]),
+                user("52345125252", 1, &["Brazil Ambassador"]),
+            ],
+        });
+        assert_eq!(
+            output.scores,
+            vec![("52345125253".into(), 2.0), ("52345125252".into(), 1.5)]
+        );
     }
 }

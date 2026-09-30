@@ -1,5 +1,5 @@
 [package]
-name = "prior_voting_history_guest"
+name = "assigned_reputation_guest"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -8,4 +8,4 @@ publish = false
 
 [dependencies]
 risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["std"] }
-prior-voting-history-core = { path = "../../core/prior-voting-history" }
+assigned-reputation-core = { path = "../../core/assigned-reputation" }

@@ -1,8 +1,5 @@
 //! Public proof result. No scoring rules live here.
-use crate::{
-    neuron::{validate_current_round, validate_user_id},
-    Input,
-};
+use crate::Input;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -12,16 +9,6 @@ use std::collections::BTreeMap;
 pub struct Output {
     pub current_round: u32,
     pub scores: BTreeMap<String, f64>,
-}
-
-impl Output {
-    pub fn validate(&self) -> Result<()> {
-        validate_current_round(self.current_round)?;
-        for user in self.scores.keys() {
-            validate_user_id(user)?;
-        }
-        Ok(())
-    }
 }
 
 /// Attach the public round to the existing neuron's scores.
