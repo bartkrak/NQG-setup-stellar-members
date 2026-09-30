@@ -172,7 +172,7 @@ fi
 
 # With the layers from governance_deploy.sh (all weights 1.0, layer 0 sums
 # Neuron1 and Neuron2, layer 1 is Neuron3 alone) the power is N1 + N2 + N3.
-# bc because the values overflow jq's numbers.
+# bc because a sum of i64 values can overflow shell arithmetic.
 
 step "5. Check voting powers read from NQG"
 
@@ -195,8 +195,8 @@ for id in $VOTERS; do
   fi
 done
 
-# governance(token_id).nqg is the power scaled to 6 decimals. A membership
-# build that does not read NQG by token id shows 0: a warning, not a failure.
+# governance(token_id).nqg has 6 decimals, like NQG. A membership build that
+# does not read NQG's i64 by token id shows 0: a warning, not a failure.
 
 step "6. Connect membership to NQG and read scores through it"
 
@@ -208,7 +208,7 @@ fi
 
 MEMBERSHIP_UPDATED=true
 for id in $VOTERS; do
-  EXPECTED=$(echo "$(expected_power "$id") / 10^12" | bc)
+  EXPECTED=$(expected_power "$id")
   ACTUAL=$(read_only "$MEMBERSHIP" governance --token_id "$id" | jq -r '.nqg')
   if [ "$ACTUAL" = "$EXPECTED" ]; then
     pass "membership shows member $id with NQG score $ACTUAL"
@@ -221,7 +221,7 @@ for id in $VOTERS; do
 done
 if [ "$MEMBERSHIP_UPDATED" = false ]; then
   echo "WARN: scores read as 0 through the membership contract. Its get_nqg must"
-  echo "      call get_voting_power_for_user with the token id; see"
+  echo "      call get_voting_power_for_user with the token id and decode an i64; see"
   echo "      contracts/governance/README.md, 'Connecting to Stellar Membership'."
 fi
 

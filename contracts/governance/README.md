@@ -21,18 +21,21 @@ The contract only computes NQG. It does not count votes: other contracts and app
 
 ## Interface
 
-Voter ids are plain `u32` Stellar Membership token ids. Scores are `I256` fixed point numbers with 18 decimals
-(`1_000_000_000_000_000_000` is 1.0).
+Voter ids are plain `u32` Stellar Membership token ids. Neuron results, neuron weights and voting powers are `i64`
+fixed point numbers with 6 decimals: `1_000_000` is 1.0, and the largest value is about 9.2 trillion
+(9,223,372,036,854.775807). Weighting and `Product` layers multiply in `i128` before dividing, so the full range is
+usable. A result that does not fit an `i64` fails with `ArithmeticOverflow` instead of wrapping. The stellar CLI takes
+and prints `i64` values as JSON numbers, for example `1000000`.
 
 | Function | Who | What it does |
 |---|---|---|
 | `__constructor(admin, current_round, membership_contract)` | deployer | Sets the admin, the active round and the Stellar Membership contract. |
-| `add_layer(raw_neurons, layer_aggregator)` | admin | Adds a layer of neurons (`[(name, weight)]`, aggregated by `Sum` or `Product`). |
+| `add_layer(raw_neurons, layer_aggregator)` | admin | Adds a layer of neurons (`[(name, weight: i64)]`, aggregated by `Sum` or `Product`). |
 | `remove_layer(layer_id)` | admin | Removes a layer and its neurons. |
-| `set_neuron_result(layer_id, neuron_id, result: Map<u32, I256>)` | admin | Stores one neuron's results for the active round. Every key must be an active member, see below. |
+| `set_neuron_result(layer_id, neuron_id, result: Map<u32, i64>)` | admin | Stores one neuron's results for the active round. Every key must be an active member, see below. |
 | `calculate_voting_powers()` | admin | Runs all layers over the active round's neuron results and stores the voting powers for that round. |
-| `get_voting_power_for_user(member_id: u32) -> I256` | anyone | Voting power (NQG score) of one member for the active round. |
-| `get_voting_powers() -> Map<u32, I256>` | anyone | Voting powers of all members for the active round. |
+| `get_voting_power_for_user(member_id: u32) -> i64` | anyone | Voting power (NQG score) of one member for the active round. |
+| `get_voting_powers() -> Map<u32, i64>` | anyone | Voting powers of all members for the active round. |
 | `set_current_round(round)` / `get_current_round()` | admin / anyone | Switches the active round. Data of other rounds is kept. |
 | `set_membership_contract(address)` / `get_membership_contract()` | admin / anyone | Points the contract at another Stellar Membership contract. |
 | `transfer_admin(new_admin)`, `upgrade(wasm_hash)` | admin | Administration. |
@@ -49,6 +52,7 @@ Voter ids are plain `u32` Stellar Membership token ids. Scores are `I256` fixed 
 | 15 | `VotingPowersNotSet` | `get_voting_powers` before voting powers were calculated for the active round. |
 | 17 | `LayerResultsUsersMismatch` | `calculate_voting_powers` when layers do not cover the same members. |
 | 18 | `NotAMember` | `set_neuron_result` with an id that is not an active member. |
+| 19 | `ArithmeticOverflow` | `calculate_voting_powers` or `get_layer_result` when a value does not fit an `i64`. |
 
 ## Connecting to Stellar Membership
 
@@ -60,14 +64,37 @@ The two contracts point at each other:
   nothing is written. Only `status` is read from the record, so changes to its other fields do not affect NQG.
   `owner_of` is not used: it succeeds for revoked tokens.
 - **The membership contract reads NQG** to show a member's score (`governance(token_id)`, `trait_value(token_id,
-  "nqg")`). Its `get_nqg` calls `get_voting_power_for_user(token_id: u32) -> I256` and scales the 18 decimal result
-  down to its 6 decimals. Any failure, including a member without a score this round, reads as 0.
+  "nqg")`). Its `get_nqg` calls `get_voting_power_for_user(token_id: u32) -> i64`. Both contracts use 6 decimals, so the
+  value only needs widening to the membership contract's `i128`. Any failure, including a member without a score this round, reads as 0.
 
 Neither call re-enters the other contract, so there is no reentrancy at runtime.
 
 Because the score is keyed by token id, it survives `rotate_key` and `recover`. The membership contract may still
 show 0 for a while after a key moves (its voting power hold, `held_until` in `governance`); that is its own rule, NQG
 keeps returning the score.
+
+### Change needed in the membership contract
+
+Until September 2026 NQG returned an `I256` with 18 decimals, and `get_nqg` still decodes that and divides by
+`NQG_SCALE` (10^12). Against the `i64` NQG the decode fails and every score reads 0. It has to decode an `i64`
+instead, with no scaling:
+
+```rust
+fn get_nqg(e: &Env, token_id: u32) -> i128 {
+    let r = e.try_invoke_contract::<i64, InvokeError>(
+        &StellarMembership::nqg_contract(e),
+        &Symbol::new(e, "get_voting_power_for_user"),
+        vec![e, token_id.into_val(e)],
+    );
+    match r {
+        Ok(Ok(nqg)) => i128::from(nqg).max(0),
+        _ => 0,
+    }
+}
+```
+
+`NQG_SCALE` and the `I256` import in `governance.rs` become unused. The test NQG contract (`contracts/test-nqg`) and
+the `nqg` test mock should return `i64` as well.
 
 ### Deploying the pair
 
@@ -145,9 +172,10 @@ MEMBERSHIP_CONTRACT_ADDRESS=<the $MEMBERSHIP address from step 2>
 ./scripts/governance_get_voting_powers.sh
 ```
 
-The last script should print `"113000000000000000000"` (113.0) for member `0`.
+The last script should print `113000000` (113.0) for member `0`.
 
-**5. Connect the membership contract to NQG and read a score through it.**
+**5. Connect the membership contract to NQG and read a score through it.** This needs the `get_nqg` change above;
+without it `nqg` reads `"0"`.
 
 ```bash
 source .env

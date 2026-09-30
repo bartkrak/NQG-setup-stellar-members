@@ -32,7 +32,7 @@ stellar contract invoke \
   --rpc-url $STELLAR_RPC_URL \
   --network-passphrase "$STELLAR_NETWORK_PASSPHRASE" \
   -- add_layer \
-  --raw_neurons '[["Neuron1","1000000000000000000"],["Neuron2","1000000000000000000"]]' \
+  --raw_neurons '[["Neuron1",1000000],["Neuron2",1000000]]' \
   --layer_aggregator "Sum"
 
 stellar contract invoke \
@@ -41,7 +41,7 @@ stellar contract invoke \
   --rpc-url $STELLAR_RPC_URL \
   --network-passphrase "$STELLAR_NETWORK_PASSPHRASE" \
   -- add_layer \
-  --raw_neurons '[["Neuron3","1000000000000000000"]]' \
+  --raw_neurons '[["Neuron3",1000000]]' \
   --layer_aggregator "Product"
 
 echo "Neural governance set up successfully"
