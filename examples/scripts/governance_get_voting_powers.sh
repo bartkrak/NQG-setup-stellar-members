@@ -22,7 +22,7 @@ for member_id in $(jq -r '.[]' "$VOTERS_FILE"); do
     --rpc-url $STELLAR_RPC_URL \
     --network-passphrase "$STELLAR_NETWORK_PASSPHRASE" \
     --send=no \
-    -- get_voting_power_for_id \
+    -- get_voting_power_for_user \
     --member_id $member_id)
   echo "$member_id $POWER"
 done
