@@ -1,189 +1,250 @@
 # Neuron proofs with RISC Zero
 
-Generate a zero-knowledge proof of a neuron's calculation and verify its public
-result without sharing the private input. Supports **prior voting history** and
-**assigned reputation**, each with its own core crate, guest, and Image ID.
+Generate a Groth16 proof of a neuron's scores without publishing the private
+input. The workspace has two neurons, **prior voting history** and **assigned
+reputation**. Each has its own core crate, guest program, and Image ID.
 
-There are two command-line programs:
+You will:
 
-- **`host`** reads a private JSON input and generates a receipt using a local prover.
-- **`verifier`** checks a receipt against an independently approved Image ID and
-  prints the verified neuron output as JSON.
+1. Install the local prover.
+2. Build `host`.
+3. Generate a receipt and read the public scores plus the three values the chain needs.
+4. Deploy the Groth16 verifier on Stellar testnet.
+5. Ask that contract to check the proof.
 
-A **guest** is the program executed inside the RISC Zero zkVM. Its **Image ID**
-identifies the compiled program. It depends only on the source code and the
-build environment, never on the input. A **receipt** contains a cryptographic
-proof and its public output (the **journal**).
+A **guest** is the program that runs inside the RISC Zero zkVM. Its **Image ID**
+identifies that compiled program. It depends on the source and the build, and
+stays the same when the input changes. A **receipt** is the Groth16 proof plus
+its public output, the **journal**. The journal holds the scores. `journal_digest`
+is the SHA-256 hash of those bytes. 
+
+`host/src/seal.rs` reads three values out of the receipt:
+
+| Printed line | Sent to the contract as | What it is |
+| --- | --- | --- |
+| `seal` | `--seal` | Groth16 proof bytes, prefixed with a 4-byte selector |
+| `image_id` | `--image_id` | Identity of the guest that produced the journal |
+| `journal_digest` | `--journal` | SHA-256 of the journal bytes |
+
+Run every command below from the repository root unless a step says otherwise.
 
 
-## Local build and proving
+## 1. Install the prover
 
-The workspace contains `core/prior-voting-history/` and
-`core/assigned-reputation/` for each neuron's types and scoring, two guests in
-`methods/`, one `host/`, and the standalone `verifier/`. 
-
-The verifier keeps argument parsing in `cli.rs`, journal decoding in `journal.rs`,
-and cryptographic verification in `lib.rs`. Its `main.rs` only coordinates those
-steps and prints the result.
-
-Use Rust via rustup, the RISC Zero Rust guest toolchain installed through `rzup`,
-and `r0vm` 3.0.6. With those tools installed, run from the repository root:
-
-```sh
-cargo build --release --locked --manifest-path zkvm/Cargo.toml -p host -p verifier
-
-mkdir -p zkvm/artifacts
-
-zkvm/target/release/host image-id --neuron prior-voting-history
-
-zkvm/target/release/host prove --neuron prior-voting-history \
-  --input zkvm/data/example_prior_voting_history.json \
-  --receipt zkvm/artifacts/prior.bin
-
-zkvm/target/release/verifier verify --neuron prior-voting-history \
-  --receipt zkvm/artifacts/prior.bin --image-id "<APPROVED_PRIOR_IMAGE_ID>"
-```
-
-The host always uses local `r0vm`. Development receipts are disabled. The verifier
-rejects fake receipts explicitly, verifies the supplied Image ID independently of
-neuron selection, then decodes the journal as the selected output type. It has no
-guest build dependency and can be built by itself with `-p verifier`.
-
-## Generate a proof
-
-Build the host as described in [Local build and proving](#local-build-and-proving).
-Compare the selected guest's `host image-id --neuron ...` output with its
-independently approved Image ID before generating proofs.
-
-### 1. Install the prover
+Install Rust with [rustup](https://rustup.rs/). This workspace uses the stable
+toolchain in [rust-toolchain.toml](rust-toolchain.toml).
 
 Install [`rzup`](https://github.com/risc0/risc0/blob/main/risc0/cargo-risczero/README.md)
-and the prover binary used by the host:
+and `r0vm` 3.0.6. The host calls this binary. It does not use a remote prover.
 
 ```sh
 curl -L https://risczero.com/install | bash
 rzup install r0vm 3.0.6
 ```
 
-Follow the installer's PATH instructions or start a new terminal. If multiple
-versions are installed, select this one with `rzup use r0vm 3.0.6`.
+Follow the installer's `PATH` instructions, or open a new terminal. If several
+`r0vm` versions are installed, select this one:
 
-### 2. Prepare the private input
+```sh
+rzup use r0vm 3.0.6
+```
 
-Start with [data/example_prior_voting_history.json](data/example_prior_voting_history.json). It contains synthetic example data.
+`r0vm` proves a STARK on this machine, then starts the Docker image
+`risczero/risc0-groth16-prover:v2025-04-03.1` to wrap that STARK as Groth16.
+The image includes `linux/arm64`, so Colima on Apple Silicon can run it. Leave
+`DOCKER_DEFAULT_PLATFORM` unset.
 
-The input has five required fields:
+Docker must be running before `host prove`. On macOS with Colima, the virtual
+machine needs more than the default 2 GiB of memory. At 2 GiB the Groth16
+container is killed and `host prove` fails. Give Colima 8 GiB:
+
+```sh
+colima stop
+colima start --memory 8 --cpu 4
+```
+
+Later `colima start` keeps that memory and CPU count.
+
+On macOS, RISC Zero's default work directory is under `/var/folders`. Colima
+does not mount that path, so the container would see an empty `/mnt`. Put the
+work directory in your home folder, which Colima does mount. Run this in the
+same terminal that will run `host prove`. A new terminal needs the `export`
+again:
+
+```sh
+mkdir -p "$HOME/.risc0/groth16-work"
+export RISC0_WORK_DIR="$HOME/.risc0/groth16-work"
+```
+
+`r0vm` reads `RISC0_WORK_DIR` from the environment it inherits from `host`. It
+writes the STARK seal into that directory and mounts the directory into the
+container as `/mnt`. The container reads `input.json` and writes `proof.json`.
+`r0vm` turns `proof.json` into the Groth16 receipt, and `host` saves the
+receipt as the `.bin` file. 
+
+
+## 2. Build the host
+
+```sh
+cargo build --release --locked --manifest-path zkvm/Cargo.toml -p host
+```
+
+The binary is `zkvm/target/release/host`.
+
+
+## 3. Read the guest Image ID
+
+Print the Image ID of the guest compiled into this binary. Compare it with the
+Image ID you have approved before you accept scores from a proof.
+
+```sh
+zkvm/target/release/host image-id --neuron prior-voting-history
+zkvm/target/release/host image-id --neuron assigned-reputation
+```
+
+`host prove` prints the same kind of value as `image_id`, taken from the
+receipt. Those two strings match when the receipt was produced by this binary.
+
+
+## 4. Generate a proof
+
+Create the output directory once:
+
+```sh
+mkdir -p zkvm/artifacts
+```
+
+`host prove` saves a new receipt and prints the decoded journal, then `seal`,
+`image_id`, and `journal_digest`. It leaves an existing receipt file in place,
+so each run needs a new `--receipt` path. The parent directory must already
+exist. `Proof generated in ...s` goes to stderr. Proving takes several minutes.
+Groth16 wraps the STARK after the guest finishes, so it takes longer than a
+composite receipt. The host asks `r0vm` for Groth16 only.
+
+### Prior voting history
+
+```sh
+zkvm/target/release/host prove --neuron prior-voting-history \
+  --input zkvm/data/example_prior_voting_history.json \
+  --receipt zkvm/artifacts/prior-voting-history.bin
+```
+
+[data/example_prior_voting_history.json](data/example_prior_voting_history.json)
+is synthetic. Replace `--input` with your private file for real data. The input
+changes the journal and the proof. It does not change the Image ID.
+
+The JSON has five required fields:
 
 | Field | Meaning |
 | --- | --- |
-| `currentRound` | Last included round, inclusive; must be at least 8 |
+| `currentRound` | Last included round, inclusive. Must be at least 8 |
 | `users` | Person IDs whose scores should be calculated |
 | `usersRoundHistory` | Person ID to a list of participation rounds |
 | `votesPerRound` | Round to submission to person ID to vote |
 | `submittersPerRound` | Round to a list of submission authors' IDs |
 
-Votes are `Yes`, `No`, `Delegate`, or `Abstain`, with that capitalization. Missing
-or unknown fields, nonnumeric person IDs, duplicate list entries, and rounds with
-no submissions in `votesPerRound` are rejected. An individual submission may have
-an empty votes object.
+Votes are `Yes`, `No`, `Delegate`, or `Abstain`, with that capitalization.
+Missing or unknown fields, nonnumeric person IDs, duplicate list entries, and
+rounds with no submissions in `votesPerRound` are rejected. One submission may
+have an empty votes object.
 
-For each round, submission authors receive full activity. Other users must appear
-in that round's participation history. Before round 32, participation receives
-full activity; from round 32 onward, activity is `max(active votes / submissions,
-0.5)` when round vote data is present. Missing detailed round data contributes
-zero for non-authors. Only `Yes` and `No` count as active votes.
+For each round, submission authors receive full activity. Other users must
+appear in that round's participation history. Before round 32, participation
+receives full activity. From round 32 onward, activity is `max(active votes /
+submissions, 0.5)` when round vote data is present. Missing detailed round data
+contributes zero for non-authors. Only `Yes` and `No` count as active votes.
+The logistic weighting and final bonus curve are in
+[neuron.rs](core/prior-voting-history/src/neuron.rs). Rounds run from 1 through
+`currentRound`, so a larger `currentRound` takes longer.
 
-The original logistic weighting and final bonus curve remain in
-[neuron.rs](core/prior-voting-history/src/neuron.rs). Rounds are processed from 1
-through `currentRound`; generation time increases with the computation workload.
+The printed journal is JSON with `currentRound` and `scores`. `scores` maps a
+person ID to that person's score.
 
-### 3. Generate the receipt locally
+### Assigned reputation
 
-```sh
-mkdir -p zkvm/artifacts
-zkvm/target/release/host prove \
-  --input zkvm/data/example_prior_voting_history.json \
-  --receipt zkvm/artifacts/receipt.bin
-```
-
-Replace `--input` with your private file path when using real data. The host
-explicitly uses local `r0vm`; it does not select a remote proving service. The
-input changes the journal and the proof, not the Image ID.
-
-The command prints `Proof generated in ...s` and saves the binary receipt.
-**It does not run a separate verification step.** It also does not overwrite an
-existing receipt: choose a new filename for each run. Parent directories must exist.
-
-Proving can take several minutes. This workflow produces a local RISC Zero
-receipt for verification with the standalone verifier.
-
-
-## Verify a received proof
-
-### 1. Build only the verifier
+This example input is smaller than prior voting history, so it is the faster
+proof to try first.
 
 ```sh
-cargo build --release --locked --manifest-path zkvm/Cargo.toml -p verifier
+zkvm/target/release/host prove --neuron assigned-reputation \
+  --input zkvm/data/example_assigned_reputation.json \
+  --receipt zkvm/artifacts/assigned-reputation.bin
 ```
 
-Keep `-p verifier`: the default workspace build selects `host` and builds both guests.
-The verifier package does not depend on the guest build package, so neither the
-RISC Zero guest toolchain nor `r0vm` is needed for verification.
+[data/example_assigned_reputation.json](data/example_assigned_reputation.json)
+is a `users` list. Each user has `id`, `tier`, and `discord_roles`. Tier `0` is
+Verified, `1` Pathfinder, `2` Navigator, `3` Pilot. Any other tier is Unknown.
+The bonus for each user is the tier bonus plus the bonus for each listed role.
+The role names and amounts are in
+[lib.rs](core/assigned-reputation/src/lib.rs).
 
-### 2. Obtain the receipt and approved Image ID
+The printed journal is JSON. `scores` is a list of `(id, score)` pairs in the
+same order as `users`.
 
-Download the receipt as a binary file, for example to `zkvm/artifacts/receipt.bin`
-(create the directory with `mkdir -p zkvm/artifacts`). Generated receipts are
-ignored by Git, so cloning the repository does not provide one.
 
-Take the expected Image ID from a source revision and local build you have
-independently accepted, never solely from whoever sent the receipt. It must contain
-**64 hexadecimal characters**.
+## 5. Check the proof on Stellar testnet
 
-### 3. Verify
+Submit `seal`, `image_id`, and `journal_digest` from the `host prove` printout
+to `verify` on the Groth16 verifier from
+[stellar-risc0-verifier](https://github.com/NethermindEth/stellar-risc0-verifier).
+The contract argument is named `journal`. Pass `journal_digest` there.
+
+The contract checks that the seal matches the Image ID and the journal digest.
+It does not decode scores. 
+
+Install the [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/install-cli).
+Clone `stellar-risc0-verifier` and run the following
+inside that clone:
 
 ```sh
-zkvm/target/release/verifier verify \
-  --receipt zkvm/artifacts/receipt.bin \
-  --image-id "<APPROVED_IMAGE_ID>"
+stellar keys generate deployer --network testnet
+stellar keys fund deployer --network testnet
+
+rustup target add wasm32v1-none
+stellar contract build --package groth16-verifier
+
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/groth16_verifier.wasm \
+  --source-account deployer \
+  --network testnet
 ```
 
-For the bundled example, successful verification returns:
 
-```json
-{
-  "currentRound": 33,
-  "scores": {
-    "52345125252": 0.20848214882407576,
-    "52345125253": 0.06825242602146757,
-    "52345125254": 0.03410388656983916,
-    "52345125255": 0.0
-  }
-}
+Copy the contract id and the three hex lines from `host prove`. This call asks
+testnet to run `verify` and print the result. `--send=no` means the call is
+simulated and is not recorded as a transaction:
+
+```sh
+stellar contract invoke \
+  --send=no \
+  --network testnet \
+  --source deployer \
+  --id "<GROTH16_VERIFIER_CONTRACT_ID>" \
+  -- \
+  verify \
+  --seal "<SEAL>" \
+  --image_id "<IMAGE_ID>" \
+  --journal "<JOURNAL_DIGEST>"
 ```
 
-It also prints `Proof verified in ...s` to stderr. JSON goes to stdout. To save it,
-append `> verified-result.json` to the verification command. Use the process exit
-status to determine success: failed verification exits with a nonzero status and
-does not publish result JSON.
+A successful simulation prints `null`. `verify` returns an empty success value,
+and the CLI prints that empty value as `null`.
 
-
+The first four bytes of `seal` are the selector baked into this WASM. A receipt
+from `r0vm` 3.0.6 matches the parameters shipped with the verifier when those
+four bytes are the same.
 
 
 ## What the proof guarantees
 
-A valid receipt establishes correct execution of the program identified by the
-supplied Image ID and binds its public journal to that execution. It does not
-establish that the private history is authentic or complete, or identify its
-provider. This project trusts the history provider for those properties.
+A valid receipt shows that the program identified by the Image ID ran correctly
+and that this journal is the public output of that run. It does not show that
+the private history is authentic or complete, and it does not name who supplied
+that history. This project trusts the history provider for those properties.
 
-The prior-voting-history journal exposes only `currentRound` and `scores`; the
-assigned-reputation journal exposes only its person-ID/score pairs in `scores`.
-Neither contains individual votes, participation history, author lists, roles,
-tiers, or an input-data commitment. Public
-scores still reveal information about activity. The binary receipt format itself
-is not encryption.
-
-Accepting an arbitrary receipt and Image ID from the same sender only proves an
-execution of the sender's chosen program. Approval of the program identity is a
-separate responsibility.
+The prior-voting-history journal contains `currentRound` and `scores`. The
+assigned-reputation journal contains person-ID and score pairs in `scores`.
+Neither journal contains individual votes, participation history, author lists,
+roles, tiers, or a commitment to the input. Public scores still reveal
+information about activity. The `.bin` receipt is a serialization of the proof
+and the journal. It is not an encrypted copy of the private input.

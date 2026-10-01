@@ -30,6 +30,6 @@ pub enum Command {
         #[arg(long)]
         receipt: PathBuf,
     },
-    /// Show the identity of the guest compiled into this trusted application.
+    /// Show the identity of the compiled guest.
     ImageId,
 }
