@@ -2,9 +2,10 @@
 name = "methods"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [build-dependencies]
-risc0-build = { version = "^3.0.6" }
+risc0-build = "=3.0.6"
 
 [package.metadata.risc0]
-methods = ["guest"]
+methods = ["prior-voting-history-guest", "assigned-reputation-guest"]

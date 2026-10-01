@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["host", "methods", "core/prior-voting-history", "core/assigned-reputation"]
+default-members = ["host"]
+
+[profile.dev]
+opt-level = 3
+
+[profile.release]
+debug = 1
+lto = "thin"
