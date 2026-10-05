@@ -207,27 +207,17 @@ mod test {
         result
     }
 
-    /// A journal that starts with `round` like the guests' output, then `rest`.
-    fn journal(env: &Env, round: u32, rest: &[u8]) -> Bytes {
-        let mut journal = Bytes::from_slice(env, &round.to_le_bytes());
-        journal.extend_from_slice(rest);
-        journal
-    }
-
     #[test]
     fn stores_scores_and_proof_only_after_verify_sees_the_hash() {
         let (env, verifier_id, client) = setup(false);
         env.mock_all_auths();
         let neuron = Neuron::AssignedReputation;
         let result = scores(&env, 12, 1_500_000_000_000_000_000);
-        let journal = journal(&env, 33, b"scores");
+        let journal = Bytes::from_slice(&env, b"scores");
         let seal = Bytes::from_slice(&env, &[0x73, 0xc4, 0x57, 0xba, 0x01]);
         let expected_digest: BytesN<32> = env.crypto().sha256(&journal).into();
 
-        assert_eq!(
-            client.set_neuron_result(&neuron, &result, &journal, &seal),
-            33
-        );
+        client.set_neuron_result(&neuron, &33, &result, &journal, &seal);
 
         assert_eq!(client.get_neuron_result(&neuron, &33), result);
         let stored = client.get_proof(&neuron, &33);
@@ -246,17 +236,28 @@ mod test {
 
     #[test]
     fn each_neuron_keeps_its_own_scores_and_proof() {
-        let (env, _, client) = setup(false);
+        let (env, verifier_id, client) = setup(false);
         env.mock_all_auths();
         let prior_scores = scores(&env, 7, 2_500_000_000_000_000_000);
         let assigned_scores = scores(&env, 12, 1_500_000_000_000_000_000);
-        let prior = journal(&env, 33, b"prior");
-        let assigned = journal(&env, 33, b"assigned");
+        let prior = Bytes::from_slice(&env, b"prior");
+        let assigned = Bytes::from_slice(&env, b"assigned");
         let seal = Bytes::from_slice(&env, &[9]);
 
-        client.set_neuron_result(&Neuron::PriorVotingHistory, &prior_scores, &prior, &seal);
+        client.set_neuron_result(
+            &Neuron::PriorVotingHistory,
+            &33,
+            &prior_scores,
+            &prior,
+            &seal,
+        );
+        assert_eq!(
+            MockVerifierClient::new(&env, &verifier_id).seen().1,
+            BytesN::from_array(&env, &PRIOR_VOTING_HISTORY_IMAGE_ID)
+        );
         client.set_neuron_result(
             &Neuron::AssignedReputation,
+            &33,
             &assigned_scores,
             &assigned,
             &seal,
@@ -281,37 +282,41 @@ mod test {
     }
 
     #[test]
-    fn each_round_keeps_its_own_scores() {
+    fn each_round_keeps_its_own_scores_and_proof() {
         let (env, _, client) = setup(false);
         env.mock_all_auths();
         let neuron = Neuron::PriorVotingHistory;
         let round_33 = scores(&env, 7, 1);
         let round_34 = scores(&env, 7, 2);
+        let journal_33 = Bytes::from_slice(&env, b"a");
+        let journal_34 = Bytes::from_slice(&env, b"b");
         let seal = Bytes::from_slice(&env, &[9]);
 
-        client.set_neuron_result(&neuron, &round_33, &journal(&env, 33, b"a"), &seal);
-        client.set_neuron_result(&neuron, &round_34, &journal(&env, 34, b"b"), &seal);
+        client.set_neuron_result(&neuron, &33, &round_33, &journal_33, &seal);
+        client.set_neuron_result(&neuron, &34, &round_34, &journal_34, &seal);
 
         assert_eq!(client.get_neuron_result(&neuron, &33), round_33);
         assert_eq!(client.get_neuron_result(&neuron, &34), round_34);
+        assert_eq!(client.get_proof(&neuron, &33).journal, journal_33);
+        assert_eq!(client.get_proof(&neuron, &34).journal, journal_34);
         let Err(Ok(Error::NotFound)) = client.try_get_neuron_result(&neuron, &35) else {
             panic!("expected NotFound");
         };
     }
 
     #[test]
-    fn journal_without_a_round_is_rejected() {
+    fn same_round_is_replaced_by_a_later_verified_call() {
         let (env, _, client) = setup(false);
         env.mock_all_auths();
         let neuron = Neuron::PriorVotingHistory;
-        let short = Bytes::from_slice(&env, &[1, 2, 3]);
+        let first = scores(&env, 7, 1);
+        let second = scores(&env, 7, 2);
         let seal = Bytes::from_slice(&env, &[9]);
 
-        let Err(Ok(Error::InvalidJournal)) =
-            client.try_set_neuron_result(&neuron, &scores(&env, 7, 1), &short, &seal)
-        else {
-            panic!("expected InvalidJournal");
-        };
+        client.set_neuron_result(&neuron, &33, &first, &Bytes::from_slice(&env, b"a"), &seal);
+        client.set_neuron_result(&neuron, &33, &second, &Bytes::from_slice(&env, b"b"), &seal);
+
+        assert_eq!(client.get_neuron_result(&neuron, &33), second);
     }
 
     #[test]
@@ -320,11 +325,11 @@ mod test {
         env.mock_all_auths();
         let neuron = Neuron::PriorVotingHistory;
         let result = scores(&env, 7, 1);
-        let journal = journal(&env, 33, b"scores");
+        let journal = Bytes::from_slice(&env, b"scores");
         let seal = Bytes::from_slice(&env, &[1, 2, 3]);
 
         assert!(client
-            .try_set_neuron_result(&neuron, &result, &journal, &seal)
+            .try_set_neuron_result(&neuron, &33, &result, &journal, &seal)
             .is_err());
         let Err(Ok(Error::NotFound)) = client.try_get_neuron_result(&neuron, &33) else {
             panic!("expected NotFound");
@@ -339,11 +344,11 @@ mod test {
         let (env, _, client) = setup(false);
         let neuron = Neuron::PriorVotingHistory;
         let result = scores(&env, 7, 1);
-        let journal = journal(&env, 33, b"scores");
+        let journal = Bytes::from_slice(&env, b"scores");
         let seal = Bytes::from_slice(&env, &[1]);
 
         assert!(client
-            .try_set_neuron_result(&neuron, &result, &journal, &seal)
+            .try_set_neuron_result(&neuron, &33, &result, &journal, &seal)
             .is_err());
         let Err(Ok(Error::NotFound)) = client.try_get_neuron_result(&neuron, &33) else {
             panic!("expected NotFound");
