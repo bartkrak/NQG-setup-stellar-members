@@ -40,8 +40,11 @@ pub struct Input {
     pub users: Vec<UserRecord>,
 }
 
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Output {
+    /// Not used in scoring; copied into the journal so it is proven with the scores.
+    pub current_round: u32,
     /// (id, bonus) pairs, in the same order as the input users.
     pub scores: Vec<(String, f64)>,
 }
@@ -83,7 +86,7 @@ fn discord_roles_bonus(roles: &[String]) -> f64 {
     roles.iter().map(|role| role_to_bonus(role)).sum()
 }
 
-pub fn calculate_result(input: &Input) -> Output {
+pub fn calculate_result(current_round: u32, input: &Input) -> Output {
     let scores = input
         .users
         .iter()
@@ -93,7 +96,10 @@ pub fn calculate_result(input: &Input) -> Output {
             (user.id.clone(), bonus)
         })
         .collect();
-    Output { scores }
+    Output {
+        current_round,
+        scores,
+    }
 }
 
 #[cfg(test)]
@@ -118,7 +124,8 @@ mod tests {
                 user("52345125254", 0, &["Public Good Contributor"]),
             ],
         };
-        let output = calculate_result(&input);
+        let output = calculate_result(33, &input);
+        assert_eq!(output.current_round, 33);
         assert_eq!(output.scores[0], ("52345125252".to_string(), 5.0));
         assert_eq!(output.scores[1], ("52345125253".to_string(), 3.0));
         assert_eq!(output.scores[2], ("52345125254".to_string(), 1.0));
@@ -129,7 +136,7 @@ mod tests {
         let input = Input {
             users: vec![user("52345125252", -1, &["unrecognized role"])],
         };
-        assert_eq!(calculate_result(&input).scores[0].1, 0.0);
+        assert_eq!(calculate_result(1, &input).scores[0].1, 0.0);
     }
 
     #[test]
@@ -142,9 +149,12 @@ mod tests {
             "Europe Ambassador",
         ] {
             assert_eq!(
-                calculate_result(&Input {
-                    users: vec![user("52345125252", 0, &[role])],
-                })
+                calculate_result(
+                    1,
+                    &Input {
+                        users: vec![user("52345125252", 0, &[role])],
+                    }
+                )
                 .scores[0]
                     .1,
                 0.5,
@@ -159,9 +169,12 @@ mod tests {
             "Nigeria Ambassador",
         ] {
             assert_eq!(
-                calculate_result(&Input {
-                    users: vec![user("52345125252", 0, &[role])],
-                })
+                calculate_result(
+                    1,
+                    &Input {
+                        users: vec![user("52345125252", 0, &[role])],
+                    }
+                )
                 .scores[0]
                     .1,
                 0.0,
@@ -172,12 +185,15 @@ mod tests {
 
     #[test]
     fn preserves_order_duplicate_roles_and_unknown_tiers() {
-        let output = calculate_result(&Input {
-            users: vec![
-                user("52345125253", 99, &["SDF", "SDF"]),
-                user("52345125252", 1, &["Brazil Ambassador"]),
-            ],
-        });
+        let output = calculate_result(
+            1,
+            &Input {
+                users: vec![
+                    user("52345125253", 99, &["SDF", "SDF"]),
+                    user("52345125252", 1, &["Brazil Ambassador"]),
+                ],
+            },
+        );
         assert_eq!(
             output.scores,
             vec![("52345125253".into(), 2.0), ("52345125252".into(), 1.5)]

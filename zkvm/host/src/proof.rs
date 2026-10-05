@@ -2,8 +2,11 @@ use anyhow::{ensure, Result};
 use risc0_zkvm::{ExecutorEnv, ExternalProver, InnerReceipt, Prover, ProverOpts, Receipt};
 use serde::Serialize;
 
-pub fn prove(input: &impl Serialize, elf: &[u8]) -> Result<Receipt> {
-    let env = ExecutorEnv::builder().write(input)?.build()?;
+pub fn prove(current_round: u32, input: &impl Serialize, elf: &[u8]) -> Result<Receipt> {
+    let env = ExecutorEnv::builder()
+        .write(&current_round)?
+        .write(input)?
+        .build()?;
     let prover = ExternalProver::new("local", "r0vm");
     let opts = ProverOpts::groth16().with_dev_mode(false);
 

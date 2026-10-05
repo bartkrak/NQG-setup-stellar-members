@@ -16,10 +16,10 @@ const ACTIVE_VOTES_HISTORY_OLDEST_ROUND: u32 = 32;
 const ACTIVE_VOTES_MIN_RATIO: f64 = 0.5;
 const OLDEST_ROUND: u32 = 1;
 
-pub(crate) fn validate_current_round(current_round: u32) -> Result<()> {
+pub fn validate_current_round(current_round: u32) -> Result<()> {
     ensure!(
         current_round >= ROUND_IMPORTANCE_DECAY_OFFSET,
-        "currentRound must be at least 8"
+        "CURRENT_ROUND must be at least 8"
     );
     Ok(())
 }
@@ -36,7 +36,6 @@ pub(crate) fn validate_user_id(user: &str) -> Result<()> {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PriorVotingHistoryInput {
-    pub current_round: u32,
     pub users: Vec<String>,
     pub users_round_history: HashMap<String, Vec<u32>>,
     pub votes_per_round: HashMap<u32, HashMap<String, HashMap<String, Vote>>>,
@@ -52,7 +51,6 @@ impl PriorVotingHistoryInput {
     }
 
     pub fn validate(&self) -> Result<()> {
-        validate_current_round(self.current_round)?;
         for user in &self.users {
             validate_user_id(user)?;
         }
@@ -92,10 +90,11 @@ impl PriorVotingHistoryInput {
 
     /// Validate even when the input was deserialized directly through serde.
     /// Sorted output gives stable JSON key ordering.
-    pub fn calculate(self) -> Result<BTreeMap<String, f64>> {
+    pub fn calculate(self, current_round: u32) -> Result<BTreeMap<String, f64>> {
+        validate_current_round(current_round)?;
         self.validate()?;
         let neuron = PriorVotingHistoryNeuron {
-            current_round: self.current_round,
+            current_round,
             users_round_history: self.users_round_history,
             votes_per_round: self.votes_per_round,
             submitters_per_round: self

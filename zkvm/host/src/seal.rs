@@ -4,20 +4,9 @@ use risc0_zkvm::{
     sha::{Digest, Digestible},
     Groth16Receipt, InnerReceipt, Receipt, ReceiptClaim,
 };
-use std::fmt;
-
 pub struct OnChainProof {
     pub seal: Vec<u8>,
     pub image_id: Digest,
-    pub journal_digest: Digest,
-}
-
-impl fmt::Display for OnChainProof {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "seal {}", hex::encode(&self.seal))?;
-        writeln!(f, "image_id {}", self.image_id)?;
-        write!(f, "journal_digest {}", self.journal_digest)
-    }
 }
 
 /// Read the seal, Image ID, and journal digest from a Groth16 receipt.
@@ -34,7 +23,6 @@ pub fn on_chain_proof(receipt: &Receipt) -> Result<OnChainProof> {
     Ok(OnChainProof {
         seal: encode_seal(groth16),
         image_id: claim.pre.digest(),
-        journal_digest: receipt.journal.digest(),
     })
 }
 

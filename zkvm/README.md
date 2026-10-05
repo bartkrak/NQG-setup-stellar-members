@@ -8,7 +8,7 @@ You will:
 
 1. Install the local prover.
 2. Build `host`.
-3. Generate a receipt and read the public scores plus the three values the chain needs.
+3. Generate a receipt and read the public scores, the raw journal, and the proof.
 4. Deploy the Groth16 verifier on Stellar testnet.
 5. Ask that contract to check the proof.
 
@@ -18,13 +18,14 @@ stays the same when the input changes. A **receipt** is the Groth16 proof plus
 its public output, the **journal**. The journal holds the scores. `journal_digest`
 is the SHA-256 hash of those bytes. 
 
-`host/src/seal.rs` reads three values out of the receipt:
+`host prove` writes one JSON file, `--output`, with everything needed on chain:
 
-| Printed line | Sent to the contract as | What it is |
-| --- | --- | --- |
-| `seal` | `--seal` | Groth16 proof bytes, prefixed with a 4-byte selector |
-| `image_id` | `--image_id` | Identity of the guest that produced the journal |
-| `journal_digest` | `--journal` | SHA-256 of the journal bytes |
+| Field | What it is |
+| --- | --- |
+| `currentRound`, `scores` | The decoded journal, for reading the scores |
+| `journal` | Raw journal bytes, hex |
+| `seal` | Groth16 proof bytes, prefixed with a 4-byte selector, hex |
+| `imageId` | Identity of the guest that produced the journal |
 
 Run every command below from the repository root unless a step says otherwise.
 
@@ -102,8 +103,8 @@ zkvm/target/release/host image-id --neuron prior-voting-history
 zkvm/target/release/host image-id --neuron assigned-reputation
 ```
 
-`host prove` prints the same kind of value as `image_id`, taken from the
-receipt. Those two strings match when the receipt was produced by this binary.
+`host prove` writes the same kind of value as `imageId` in `--output`, taken
+from the receipt. Those two strings match when the receipt was produced by this binary.
 
 
 ## 4. Generate a proof
@@ -114,30 +115,46 @@ Create the output directory once:
 mkdir -p zkvm/artifacts
 ```
 
-`host prove` saves a new receipt and prints the decoded journal, then `seal`,
-`image_id`, and `journal_digest`. It leaves an existing receipt file in place,
-so each run needs a new `--receipt` path. The parent directory must already
-exist. `Proof generated in ...s` goes to stderr. Proving takes several minutes.
-Groth16 wraps the STARK after the guest finishes, so it takes longer than a
-composite receipt. The host asks `r0vm` for Groth16 only.
+`host prove` saves a new receipt and writes the decoded scores together with
+`journal`, `seal`, and `imageId` to `--output`. It leaves an existing receipt
+or output file in
+place, so each run needs a new
+`--receipt` path and a new `--output` path. The parent directory must already
+exist. `Proof generated in ...s` goes to stderr. Proving
+takes several minutes. Groth16 wraps the STARK after the guest finishes, so it
+takes longer than a composite receipt. The host asks `r0vm` for Groth16 only.
+
+Both neurons need the round being scored. `host prove` reads `CURRENT_ROUND`
+only from a `.env` file in the working directory or one of its parents. A shell
+variable with the same name is ignored. Create the file in the repository root:
+
+```sh
+echo "CURRENT_ROUND=33" > .env
+```
+
+The round is not part of the input file. The guest commits it as the first
+field of the journal, so it is proven together with the scores, and the
+`--output` file of both neurons has `currentRound` next to `scores`. The proof
+shows which round the scores were calculated for. It does not show that this
+round is the real current round.
 
 ### Prior voting history
 
 ```sh
 zkvm/target/release/host prove --neuron prior-voting-history \
   --input zkvm/data/example_prior_voting_history.json \
-  --receipt zkvm/artifacts/prior-voting-history.bin
+  --receipt zkvm/artifacts/prior-voting-history.bin \
+  --output zkvm/artifacts/prior-voting-history.json
 ```
 
 [data/example_prior_voting_history.json](data/example_prior_voting_history.json)
 is synthetic. Replace `--input` with your private file for real data. The input
 changes the journal and the proof. It does not change the Image ID.
 
-The JSON has five required fields:
+The JSON has four required fields:
 
 | Field | Meaning |
 | --- | --- |
-| `currentRound` | Last included round, inclusive. Must be at least 8 |
 | `users` | Person IDs whose scores should be calculated |
 | `usersRoundHistory` | Person ID to a list of participation rounds |
 | `votesPerRound` | Round to submission to person ID to vote |
@@ -155,9 +172,10 @@ submissions, 0.5)` when round vote data is present. Missing detailed round data
 contributes zero for non-authors. Only `Yes` and `No` count as active votes.
 The logistic weighting and final bonus curve are in
 [neuron.rs](core/prior-voting-history/src/neuron.rs). Rounds run from 1 through
-`currentRound`, so a larger `currentRound` takes longer.
+`CURRENT_ROUND`, inclusive, so a larger round takes longer. This neuron needs
+`CURRENT_ROUND` to be at least 8.
 
-The printed journal is JSON with `currentRound` and `scores`. `scores` maps a
+The `--output` file is JSON with `currentRound` and `scores`. `scores` maps a
 person ID to that person's score.
 
 ### Assigned reputation
@@ -168,7 +186,8 @@ proof to try first.
 ```sh
 zkvm/target/release/host prove --neuron assigned-reputation \
   --input zkvm/data/example_assigned_reputation.json \
-  --receipt zkvm/artifacts/assigned-reputation.bin
+  --receipt zkvm/artifacts/assigned-reputation.bin \
+  --output zkvm/artifacts/assigned-reputation.json
 ```
 
 [data/example_assigned_reputation.json](data/example_assigned_reputation.json)
@@ -178,16 +197,21 @@ The bonus for each user is the tier bonus plus the bonus for each listed role.
 The role names and amounts are in
 [lib.rs](core/assigned-reputation/src/lib.rs).
 
-The printed journal is JSON. `scores` is a list of `(id, score)` pairs in the
-same order as `users`.
+The round does not change the scores. It is only copied into the journal.
+
+The `--output` file is JSON with `currentRound` and `scores`, which maps a
+person ID to that person's score, the same as prior voting history. The proven
+journal itself holds the scores as `(id, score)` pairs in the same order as
+`users`.
 
 
 ## 5. Check the proof on Stellar testnet
 
-Submit `seal`, `image_id`, and `journal_digest` from the `host prove` printout
-to `verify` on the Groth16 verifier from
+Submit `seal` and `imageId` from the `--output` file to `verify` on the
+Groth16 verifier from
 [stellar-risc0-verifier](https://github.com/NethermindEth/stellar-risc0-verifier).
-The contract argument is named `journal`. Pass `journal_digest` there.
+The contract argument named `journal` is the SHA-256 of the raw `journal` bytes.
+`host prove` does not write that hash.
 
 The contract checks that the seal matches the Image ID and the journal digest.
 It does not decode scores. 
@@ -210,7 +234,8 @@ stellar contract deploy \
 ```
 
 
-Copy the contract id and the three hex lines from `host prove`. This call asks
+Copy the contract id, and `seal` and `imageId` from the `--output` file. Pass
+the SHA-256 of the `journal` bytes as `--journal`. This call asks
 testnet to run `verify` and print the result. `--send=no` means the call is
 simulated and is not recorded as a transaction:
 
@@ -235,6 +260,47 @@ from `r0vm` 3.0.6 matches the parameters shipped with the verifier when those
 four bytes are the same.
 
 
+## 6. Store the scores after verification
+
+[`neuron-result`](../zkvm-contracts/neuron-result) `set_neuron_result` takes the
+score map, the round, and `journal` and `seal` from the `--output` file. It hashes
+those journal bytes, uses the Image ID of the selected neuron, and calls
+`verify` on the Groth16 verifier address saved at deployment. When that call
+succeeds, it stores the scores and the journal, seal, image id, and digest.
+Nothing is stored when `verify` fails. `journal_digest` is not an argument.
+
+`round` is an argument, and the result is stored under that neuron and round.
+The contract does not check it against the `currentRound` in the journal, so
+the admin is trusted to pass the right round, the same as for the score map.
+Results for earlier rounds stay readable. A later call that also verifies for
+the same neuron and round replaces that result.
+
+Build this contract from the repository root. Reuse the verifier deployed in
+section 5; do not deploy another copy of `groth16_verifier.wasm`.
+
+```sh
+stellar contract build --manifest-path zkvm-contracts/Cargo.toml --package neuron-result
+
+stellar contract deploy \
+  --wasm zkvm-contracts/target/wasm32v1-none/release/neuron_result.wasm \
+  --source-account deployer \
+  --network testnet \
+  -- \
+  --admin "<ADMIN_ADDRESS>" \
+  --verifier "<GROTH16_VERIFIER_CONTRACT_ID>"
+```
+
+`get_neuron_result --neuron AssignedReputation --round 33` reads the score map
+for that round. `get_proof` takes the same arguments and reads the stored
+journal and seal. `PriorVotingHistory` is the other `--neuron` value.
+
+The contract has the Image IDs of both guests built in. After any change to a
+guest or its core crate, run `host image-id` again, update
+`PRIOR_VOTING_HISTORY_IMAGE_ID` and `ASSIGNED_REPUTATION_IMAGE_ID` in
+[lib.rs](../zkvm-contracts/neuron-result/src/lib.rs), and deploy the contract
+again.
+
+
 ## What the proof guarantees
 
 A valid receipt shows that the program identified by the Image ID ran correctly
@@ -242,8 +308,9 @@ and that this journal is the public output of that run. It does not show that
 the private history is authentic or complete, and it does not name who supplied
 that history. This project trusts the history provider for those properties.
 
-The prior-voting-history journal contains `currentRound` and `scores`. The
-assigned-reputation journal contains person-ID and score pairs in `scores`.
+Both journals start with `currentRound`. The prior-voting-history journal then
+contains `scores` as a map, and the assigned-reputation journal contains
+person-ID and score pairs in `scores`.
 Neither journal contains individual votes, participation history, author lists,
 roles, tiers, or a commitment to the input. Public scores still reveal
 information about activity. The `.bin` receipt is a serialization of the proof

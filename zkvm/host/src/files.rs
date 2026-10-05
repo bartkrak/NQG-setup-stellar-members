@@ -22,3 +22,19 @@ pub fn save_receipt(path: &Path, receipt: &Receipt) -> Result<()> {
         })?;
     file.write_all(&bytes).context("Cannot write receipt")
 }
+
+pub fn save_output(path: &Path, json: &str) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| {
+            format!(
+                "Cannot create {} (existing files are not overwritten)",
+                path.display()
+            )
+        })?;
+    file.write_all(json.as_bytes())
+        .and_then(|_| file.write_all(b"\n"))
+        .context("Cannot write output")
+}

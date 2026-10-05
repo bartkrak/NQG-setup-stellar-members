@@ -29,6 +29,9 @@ pub enum Command {
         input: PathBuf,
         #[arg(long)]
         receipt: PathBuf,
+        /// Decoded journal JSON. Existing files are not overwritten.
+        #[arg(long)]
+        output: PathBuf,
     },
     /// Show the identity of the compiled guest.
     ImageId,

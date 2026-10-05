@@ -12,9 +12,8 @@ pub struct Output {
 }
 
 /// Attach the public round to the existing neuron's scores.
-pub fn calculate(input: Input) -> Result<Output> {
-    let current_round = input.current_round;
-    let scores = input.calculate()?;
+pub fn calculate(current_round: u32, input: Input) -> Result<Output> {
+    let scores = input.calculate(current_round)?;
     Ok(Output {
         current_round,
         scores,
