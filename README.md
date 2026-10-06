@@ -3,7 +3,7 @@
 This repository computes neuron scores for Stellar Community Fund members,
 proves with [RISC Zero](https://risczero.com/) that the scores were computed
 correctly, and stores them on Stellar together with the proof. The private
-input, such as voting history, Discord roles, and tiers, never leaves the
+input never leaves the
 machine that generates the proof. Only the scores and the proof are published.
 
 The system has three parts:
@@ -23,14 +23,14 @@ This repository does not contain that contract. It is deployed once and
 ## Contents
 
 - [How it works](#how-it-works)
-- [Terms](#terms)
 - [Requirements](#requirements)
 - [Build the prover](#build-the-prover)
-- [Path A: contracts are not deployed yet](#path-a-contracts-are-not-deployed-yet)
-- [Path B: contracts are already deployed](#path-b-contracts-are-already-deployed)
+- [Deploy the contracts](#deploy-the-contracts)
 - [Generate a proof](#generate-a-proof)
 - [Submit the scores](#submit-the-scores)
 - [Read the scores and the proof](#read-the-scores-and-the-proof)
+- [The contract](#the-contract)
+- [What is proven and what is trusted](#what-is-proven-and-what-is-trusted)
 - [After changing a neuron](#after-changing-a-neuron)
 
 
@@ -93,17 +93,26 @@ For proving:
   in the [Colima setup instructions](https://github.com/abiosoft/colima/blob/main/docs/FAQ.md#docker-buildx-plugin-is-missing).
   If starting from scratch with Colima, first run `brew install colima docker`.
 
+  Docker is used twice. Building the prover compiles the guests in
+  `risczero/risc0-guest-builder:r0.1.91.1`, pinned by SHA-256 digest in
+  [`zkvm/methods/build.rs`](zkvm/methods/build.rs). Proving runs
+  `risczero/risc0-groth16-prover:v2025-04-03.1`, which `r0vm` starts to turn
+  the proof into Groth16.
 
-  Guest compilation uses `risczero/risc0-guest-builder:r0.1.91.1`, pinned by
-  SHA-256 digest in [`zkvm/methods/build.rs`](zkvm/methods/build.rs).
-  `r0vm` separately runs `risczero/risc0-groth16-prover:v2025-04-03.1`
-  to turn the proof into Groth16. On macOS with Colima, give the virtual
-  machine 8 GiB of memory. With the default 2 GiB the container is killed:
+  On macOS with Colima, give the virtual machine 8 GiB of memory; with the
+  default 2 GiB the Groth16 container is killed. On Apple Silicon also enable
+  Rosetta: the guest builder exists only for `linux/amd64`, and without
+  Rosetta Colima emulates it with QEMU, which is much slower:
 
   ```sh
   colima stop
-  colima start --memory 8 --cpu 4
+  colima start --vz-rosetta --memory 8 --cpu 4
   ```
+
+  Later `colima start` calls keep these settings. If Colima refuses
+  `--vz-rosetta` because the existing virtual machine uses QEMU, recreate it
+  with `colima delete` and run the start command again. This deletes the
+  images and containers stored in Colima.
 
   After starting Docker Desktop or Colima, verify both the plugin and the
   connection to Docker:
@@ -115,8 +124,8 @@ For proving:
 
 For deploying and submitting:
 
-- [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/install-cli)
-  and the WASM target:
+- [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/install-cli).
+  Also add the WASM target:
 
   ```sh
   rustup target add wasm32v1-none
@@ -128,9 +137,15 @@ For deploying and submitting:
 
 ## Build the prover
 
+Start Docker first: the build compiles both guests inside the guest builder
+image and fails if Docker is not running.
+
 ```sh
 cargo build --release --locked --manifest-path zkvm/Cargo.toml -p host
 ```
+
+The first build downloads the guest builder image and might take
+several minutes. Later builds reuse Docker's cache.
 
 The binary is `zkvm/target/release/host`. It has two commands:
 
@@ -142,25 +157,30 @@ The binary is `zkvm/target/release/host`. It has two commands:
 `<neuron>` is `prior-voting-history` or `assigned-reputation`. If `--neuron`
 is left out, `prior-voting-history` is used, so always pass it.
 
-Print both Image IDs. You need them in the next section:
+Print both Image IDs. You need them in
+[step 3 of the deployment](#3-put-the-image-ids-into-the-contract):
 
 ```sh
 zkvm/target/release/host image-id --neuron prior-voting-history
 zkvm/target/release/host image-id --neuron assigned-reputation
 ```
 
-The guests are currently compiled with the local toolchain, and the compiled
-binary contains local file paths. A build in another folder or on another
-machine can therefore give different Image IDs. Generate proofs with the same
-build whose Image IDs are in the deployed contract.
+Because the guests are compiled in a pinned Docker image, the same commit gives
+the same Image IDs on every machine and in every folder. Anyone can check the
+Image IDs in the contract by building that commit and running these commands.
 
 
-## Path A: contracts are not deployed yet
+## Deploy the contracts
 
-Follow this path for a new network or a fresh setup. You deploy the Groth16
-verifier, then `neuron-result`, then generate and submit proofs.
+> **Contracts already deployed?** Skip to [Generate a proof](#generate-a-proof).
+> You need the `neuron-result` contract id as `<CONTRACT_ID>`, and the admin
+> key added to the Stellar CLI with `stellar keys add admin --secret-key`.
+> Build the prover from the commit the contract was deployed from; otherwise
+> the Image IDs may differ and the contract rejects your proofs.
 
-### A1. Create the accounts
+You deploy the Groth16 verifier, then `neuron-result`.
+
+### 1. Create the accounts
 
 The **deployer** pays for the deployments. The **admin** is the only account
 that can call `set_neuron_result`. They can be the same account. On testnet:
@@ -175,7 +195,7 @@ stellar keys fund admin --network testnet
 stellar keys address admin
 ```
 
-### A2. Deploy the Groth16 verifier
+### 2. Deploy the Groth16 verifier
 
 Skip this step if a Groth16 verifier from `stellar-risc0-verifier` already
 exists on your network and you trust that deployment. Then use its contract id
@@ -202,7 +222,7 @@ The verifier accepts seals whose first 4 bytes match the selector built into
 its WASM. Proofs from `r0vm` 3.0.6 match the parameters shipped with the
 verifier.
 
-### A3. Put the Image IDs into the contract
+### 3. Put the Image IDs into the contract
 
 The contract has the Image IDs as constants in
 [`zkvm-contracts/neuron-result/src/lib.rs`](zkvm-contracts/neuron-result/src/lib.rs):
@@ -224,7 +244,7 @@ zkvm/target/release/host image-id --neuron prior-voting-history \
 A contract with a wrong Image ID deploys without error, but every
 `set_neuron_result` call for that neuron fails in the verifier.
 
-### A4. Deploy `neuron-result`
+### 4. Deploy `neuron-result`
 
 ```sh
 stellar contract build --manifest-path zkvm-contracts/Cargo.toml --package neuron-result
@@ -242,57 +262,6 @@ stellar contract deploy \
 The constructor runs once during deployment, and the admin and the verifier
 cannot be changed afterwards. Save the printed contract id as `<CONTRACT_ID>`.
 
-### A5. Prove and submit
-
-Continue with [Generate a proof](#generate-a-proof) and
-[Submit the scores](#submit-the-scores).
-
-
-## Path B: contracts are already deployed
-
-Follow this path when the verifier and `neuron-result` are already on the
-network and you only need to submit scores for a new round.
-
-You need:
-
-- `<CONTRACT_ID>`, the id of the deployed `neuron-result` contract.
-- The admin key, set when that contract was deployed. Add it to the Stellar CLI
-  once:
-
-  ```sh
-  stellar keys add admin --secret-key
-  ```
-
-- A `host` binary whose Image IDs match the contract.
-
-### B1. Check the Image IDs
-
-Build the prover from the same commit that was used to deploy the contract,
-then compare `host image-id` with the constants in
-[`zkvm-contracts/neuron-result/src/lib.rs`](zkvm-contracts/neuron-result/src/lib.rs).
-
-If the contract already stored a result, you can also read the Image ID it
-accepted from the chain:
-
-```sh
-stellar contract invoke --send=no --network testnet --source admin \
-  --id "<CONTRACT_ID>" \
-  -- \
-  get_proof --neuron PriorVotingHistory --round <EARLIER_ROUND>
-```
-
-The `image_id` field in the result must equal `host image-id` for that neuron.
-
-If the Image IDs differ, proofs from this binary will be rejected. Either use
-the build that matches the contract, or follow
-[After changing a neuron](#after-changing-a-neuron) and deploy a new
-`neuron-result` as in Path A, steps A3 and A4, reusing the existing verifier.
-
-### B2. Prove and submit
-
-Continue with [Generate a proof](#generate-a-proof) and
-[Submit the scores](#submit-the-scores).
-
 
 ## Generate a proof
 
@@ -306,7 +275,8 @@ ignored. The round is not part of the input file.
 echo "CURRENT_ROUND=33" > .env
 ```
 
-`.env` is in `.gitignore`.
+This replaces the whole file. If `.env` holds other settings, edit the
+`CURRENT_ROUND` line instead. `.env` is in `.gitignore`.
 
 ### 2. Point RISC Zero at a work directory Docker can see
 
@@ -344,7 +314,7 @@ zkvm/target/release/host prove --neuron prior-voting-history \
 ```
 
 The files in `zkvm/data/` are synthetic. Use your private input file for real
-data. Proving takes several minutes. 
+data. Proving takes several minutes.
 
 `host prove` never overwrites files. Each run needs a new `--output` path, and
 its parent directory must exist. The path is checked after proving, so pick a
@@ -425,7 +395,8 @@ Results for other rounds stay unchanged.
 ## Read the scores and the proof
 
 Anyone can read the stored data. `--send=no` simulates the call and does not
-create a transaction.
+create a transaction or cost a fee. The CLI still needs a `--source` account
+that exists on the network, but it can be any account, not only `admin`.
 
 ```sh
 stellar contract invoke --send=no --network testnet --source admin \
@@ -444,12 +415,62 @@ stellar contract invoke --send=no --network testnet --source admin \
   get_proof --neuron AssignedReputation --round 33
 ```
 
-This returns the `journal`, `seal`, `image_id`, and `journal_digest` that were
-checked. Both functions return error `NotFound` (code 1) when nothing is
+This returns the `seal`, `image_id`, and `journal_digest` that were checked. Both
+functions return error `NotFound` (code 1) when nothing is
 stored for that neuron and round.
 
 The `--neuron` values on chain are `PriorVotingHistory` and
 `AssignedReputation`.
+
+
+## The contract
+
+`neuron-result` is a Soroban contract in its own Cargo workspace,
+[`zkvm-contracts/`](zkvm-contracts), using `soroban-sdk` 25.3.0.
+
+| Function | Who can call it | What it does |
+| --- | --- | --- |
+| `__constructor(admin, verifier)` | Deployment only | Saves the admin and the Groth16 verifier address |
+| `set_neuron_result(neuron, round, result, journal, seal)` | Admin | Verifies the proof, then stores `result` and the proof under `(neuron, round)` |
+| `get_neuron_result(neuron, round)` | Anyone | Returns `Map<u32, I256>`, id to score scaled by 10^18 |
+| `get_proof(neuron, round)` | Anyone | Returns the stored `seal`, `image_id`, and `journal_digest` |
+
+`set_neuron_result` step by step:
+
+1. Requires the admin's signature.
+2. Takes the Image ID constant of `neuron`.
+3. Computes `journal_digest = sha256(journal)`.
+4. Calls `verify(seal, image_id, journal_digest)` on the verifier. If the
+   verifier rejects the proof, the whole call fails.
+5. Stores `result` and `Proof { seal, image_id, journal_digest }`.
+
+The contract stores only the journal's digest, which is what `verify` needs.
+The full journal is still an argument, so the contract computes the digest
+itself and the caller cannot pass a digest that does not belong to the journal.
+The journal therefore stays readable in the `set_neuron_result` transaction in
+Stellar's transaction history, but not in contract storage, so other contracts
+cannot read it.
+
+
+
+## What is proven and what is trusted
+
+A valid proof shows that the guest with this Image ID ran correctly and that
+the journal, the round and the scores, is its output. The contract stores
+nothing unless such a proof exists for the submitted journal.
+
+What is not proven:
+
+- **The input.** The proof does not show that the voting history, roles, or
+  tiers are real or complete, or who supplied them. The input provider is
+  trusted.
+- **The round.** The proof shows which round the scores were calculated for,
+  not that it is the actual current round.
+
+Privacy: the journal contains only the round and the scores. It contains no
+votes, participation history, author lists, roles, or tiers, and no commitment
+to the input. The scores themselves still reveal something about each
+member's activity.
 
 ## After changing a neuron
 
@@ -464,8 +485,8 @@ After such a change:
 2. Update both constants in
    [`zkvm-contracts/neuron-result/src/lib.rs`](zkvm-contracts/neuron-result/src/lib.rs).
 3. Run `cargo test --manifest-path zkvm-contracts/Cargo.toml`.
-4. Deploy a new `neuron-result` as in [Path A](#path-a-contracts-are-not-deployed-yet),
-   steps A3 and A4. Reuse the existing verifier.
+4. Deploy a new `neuron-result` as in [Deploy the contracts](#deploy-the-contracts),
+   steps 3 and 4. Reuse the existing verifier.
 5. Use the new contract id from now on. Results stored in the old contract stay
    there; they are not copied.
 

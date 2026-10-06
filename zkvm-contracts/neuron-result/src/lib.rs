@@ -30,11 +30,11 @@ pub enum Neuron {
     AssignedReputation,
 }
 
-/// Journal bytes that passed `verify`, plus the proof checked against them.
+/// Proof that passed `verify`. The journal itself is only in the
+/// `set_neuron_result` transaction; `journal_digest` is its SHA-256.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Proof {
-    pub journal: Bytes,
     pub seal: Bytes,
     pub image_id: BytesN<32>,
     pub journal_digest: BytesN<32>,
@@ -50,14 +50,14 @@ enum DataKey {
 
 /// Image ID of the prior-voting-history guest (`host image-id`).
 const PRIOR_VOTING_HISTORY_IMAGE_ID: [u8; 32] = [
-    0xef, 0x57, 0x50, 0x76, 0xad, 0xca, 0x8e, 0xa1, 0x81, 0x18, 0xe8, 0xf5, 0x61, 0xd2, 0xc3, 0x9c,
-    0x32, 0xaf, 0xb3, 0x28, 0x8d, 0x53, 0x21, 0xb9, 0x61, 0xca, 0xf5, 0xda, 0xdb, 0x28, 0x66, 0xdc,
+    0x65, 0x0c, 0x77, 0x18, 0x6e, 0x62, 0x71, 0xb8, 0xae, 0x32, 0xf2, 0xaa, 0xa6, 0x9c, 0x0c, 0x9f,
+    0x81, 0x3b, 0x42, 0xc3, 0x25, 0x29, 0x02, 0x92, 0x39, 0xd5, 0x0d, 0x95, 0x77, 0xef, 0xa4, 0xc6,
 ];
 
 /// Image ID of the assigned-reputation guest (`host image-id`).
 const ASSIGNED_REPUTATION_IMAGE_ID: [u8; 32] = [
-    0xd7, 0x5d, 0x18, 0x9d, 0xcd, 0x4b, 0x3b, 0xd0, 0x52, 0x8f, 0x8f, 0x47, 0xbe, 0x9a, 0x2f, 0x78,
-    0xfe, 0x3f, 0xb1, 0x3a, 0x21, 0xef, 0x2f, 0x7f, 0x88, 0x65, 0x2f, 0xaf, 0x35, 0x21, 0xf2, 0x01,
+    0x97, 0x46, 0x5c, 0x5f, 0x88, 0x7a, 0x17, 0xa2, 0x4e, 0x50, 0xf3, 0xf0, 0x36, 0x81, 0x2e, 0x8c,
+    0x50, 0x18, 0x5a, 0x28, 0x21, 0x6b, 0xe3, 0x65, 0xbe, 0x03, 0x57, 0x7c, 0x66, 0x6b, 0x67, 0x1b,
 ];
 
 impl Neuron {
@@ -110,7 +110,6 @@ impl NeuronResult {
         env.storage().persistent().set(
             &DataKey::Proof(neuron, round),
             &Proof {
-                journal,
                 seal,
                 image_id,
                 journal_digest,
@@ -129,7 +128,7 @@ impl NeuronResult {
             .ok_or(Error::NotFound)
     }
 
-    /// Journal, seal, image id, and digest stored by a successful `set_neuron_result`.
+    /// Seal, image id, and journal digest stored by a successful `set_neuron_result`.
     pub fn get_proof(env: Env, neuron: Neuron, round: u32) -> Result<Proof, Error> {
         env.storage()
             .persistent()
@@ -207,6 +206,10 @@ mod test {
         result
     }
 
+    fn digest(env: &Env, journal: &Bytes) -> BytesN<32> {
+        env.crypto().sha256(journal).into()
+    }
+
     #[test]
     fn stores_scores_and_proof_only_after_verify_sees_the_hash() {
         let (env, verifier_id, client) = setup(false);
@@ -215,13 +218,12 @@ mod test {
         let result = scores(&env, 12, 1_500_000_000_000_000_000);
         let journal = Bytes::from_slice(&env, b"scores");
         let seal = Bytes::from_slice(&env, &[0x73, 0xc4, 0x57, 0xba, 0x01]);
-        let expected_digest: BytesN<32> = env.crypto().sha256(&journal).into();
+        let expected_digest = digest(&env, &journal);
 
         client.set_neuron_result(&neuron, &33, &result, &journal, &seal);
 
         assert_eq!(client.get_neuron_result(&neuron, &33), result);
         let stored = client.get_proof(&neuron, &33);
-        assert_eq!(stored.journal, journal);
         assert_eq!(stored.seal, seal);
         assert_eq!(
             stored.image_id,
@@ -272,12 +274,16 @@ mod test {
             assigned_scores
         );
         assert_eq!(
-            client.get_proof(&Neuron::PriorVotingHistory, &33).journal,
-            prior
+            client
+                .get_proof(&Neuron::PriorVotingHistory, &33)
+                .journal_digest,
+            digest(&env, &prior)
         );
         assert_eq!(
-            client.get_proof(&Neuron::AssignedReputation, &33).journal,
-            assigned
+            client
+                .get_proof(&Neuron::AssignedReputation, &33)
+                .journal_digest,
+            digest(&env, &assigned)
         );
     }
 
@@ -297,8 +303,14 @@ mod test {
 
         assert_eq!(client.get_neuron_result(&neuron, &33), round_33);
         assert_eq!(client.get_neuron_result(&neuron, &34), round_34);
-        assert_eq!(client.get_proof(&neuron, &33).journal, journal_33);
-        assert_eq!(client.get_proof(&neuron, &34).journal, journal_34);
+        assert_eq!(
+            client.get_proof(&neuron, &33).journal_digest,
+            digest(&env, &journal_33)
+        );
+        assert_eq!(
+            client.get_proof(&neuron, &34).journal_digest,
+            digest(&env, &journal_34)
+        );
         let Err(Ok(Error::NotFound)) = client.try_get_neuron_result(&neuron, &35) else {
             panic!("expected NotFound");
         };
