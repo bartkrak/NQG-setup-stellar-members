@@ -1,5 +1,5 @@
 use soroban_sdk::{
-    Address, Env, I256, Map, String, Vec,
+    Address, Env, Map, String, Vec,
     testutils::{Address as _, MockAuth, MockAuthInvoke},
     vec,
 };
@@ -17,15 +17,9 @@ fn voting_powers_from_weighted_neurons() {
     env.cost_estimate().budget().reset_unlimited();
     env.mock_all_auths();
 
-    let mut raw_neurons: Vec<(String, I256)> = Vec::new(&env);
-    raw_neurons.push_back((
-        String::from_str(&env, "Dummy"),
-        I256::from_i128(&env, 2 * DECIMALS),
-    ));
-    raw_neurons.push_back((
-        String::from_str(&env, "TrustGraph"),
-        I256::from_i128(&env, 1 * DECIMALS),
-    ));
+    let mut raw_neurons: Vec<(String, i64)> = Vec::new(&env);
+    raw_neurons.push_back((String::from_str(&env, "Dummy"), 2 * DECIMALS));
+    raw_neurons.push_back((String::from_str(&env, "TrustGraph"), 1 * DECIMALS));
     contract_client.add_layer(&raw_neurons, &LayerAggregator::Sum);
 
     let user1: u32 = 1;
@@ -33,14 +27,14 @@ fn voting_powers_from_weighted_neurons() {
     let user3: u32 = 3;
 
     let mut neuron_result = Map::new(&env);
-    neuron_result.set(user1, I256::from_i128(&env, 100 * DECIMALS));
-    neuron_result.set(user2, I256::from_i128(&env, 200 * DECIMALS));
-    neuron_result.set(user3, I256::from_i128(&env, 300 * DECIMALS));
+    neuron_result.set(user1, 10 * DECIMALS);
+    neuron_result.set(user2, 20 * DECIMALS);
+    neuron_result.set(user3, 30 * DECIMALS);
 
     let mut neuron_result2 = Map::new(&env);
-    neuron_result2.set(user1, I256::from_i128(&env, 1000 * DECIMALS));
-    neuron_result2.set(user2, I256::from_i128(&env, 2000 * DECIMALS));
-    neuron_result2.set(user3, I256::from_i128(&env, 3000 * DECIMALS));
+    neuron_result2.set(user1, 100 * DECIMALS);
+    neuron_result2.set(user2, 200 * DECIMALS);
+    neuron_result2.set(user3, 300 * DECIMALS);
 
     contract_client.set_neuron_result(
         &String::from_str(&env, "0"),
@@ -59,13 +53,13 @@ fn voting_powers_from_weighted_neurons() {
 
     // Neuron 0 weighs 2, neuron 1 weighs 1, the layer sums them
     let mut expected = Map::new(&env);
-    expected.set(user1, I256::from_i128(&env, (100 * 2 + 1000) * DECIMALS));
-    expected.set(user2, I256::from_i128(&env, (200 * 2 + 2000) * DECIMALS));
-    expected.set(user3, I256::from_i128(&env, (300 * 2 + 3000) * DECIMALS));
+    expected.set(user1, (10 * 2 + 100) * DECIMALS);
+    expected.set(user2, (20 * 2 + 200) * DECIMALS);
+    expected.set(user3, (30 * 2 + 300) * DECIMALS);
     assert_eq!(contract_client.get_voting_powers(), expected);
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user2),
-        I256::from_i128(&env, (200 * 2 + 2000) * DECIMALS)
+        contract_client.get_voting_power_for_user(&user2),
+        (20 * 2 + 200) * DECIMALS
     );
 }
 
@@ -79,17 +73,11 @@ fn calculate_voting_powers_requires_admin() {
 
     let user: u32 = 1;
     contract_client.add_layer(
-        &vec![
-            &env,
-            (
-                String::from_str(&env, "Dummy"),
-                I256::from_i128(&env, DECIMALS),
-            ),
-        ],
+        &vec![&env, (String::from_str(&env, "Dummy"), DECIMALS)],
         &LayerAggregator::Sum,
     );
     let mut neuron_result = Map::new(&env);
-    neuron_result.set(user, I256::from_i128(&env, 100 * DECIMALS));
+    neuron_result.set(user, 100 * DECIMALS);
     contract_client.set_neuron_result(
         &String::from_str(&env, "0"),
         &String::from_str(&env, "0"),
@@ -127,8 +115,8 @@ fn calculate_voting_powers_requires_admin() {
     }]);
     contract_client.calculate_voting_powers();
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user),
-        I256::from_i128(&env, 100 * DECIMALS)
+        contract_client.get_voting_power_for_user(&user),
+        100 * DECIMALS
     );
 }
 
@@ -165,20 +153,14 @@ fn set_bump_round_flow() {
 
     // Setup contract
     contract_client.add_layer(
-        &soroban_sdk::vec![
-            &env,
-            (
-                neuron0.clone(),
-                I256::from_i128(&env, 1_000_000_000_000_000_000)
-            )
-        ],
+        &soroban_sdk::vec![&env, (neuron0.clone(), DECIMALS)],
         &LayerAggregator::Sum,
     );
 
     // Set results for round 25
     let mut result25 = Map::new(&env);
-    result25.set(user1, I256::from_i128(&env, 100));
-    result25.set(user2, I256::from_i128(&env, 200));
+    result25.set(user1, 100);
+    result25.set(user2, 200);
     contract_client.set_neuron_result(&layer0, &neuron0, &result25);
 
     // Verify results are set
@@ -187,10 +169,7 @@ fn set_bump_round_flow() {
         result25
     );
     contract_client.calculate_voting_powers();
-    assert_eq!(
-        contract_client.get_voting_power_for_id(&user1),
-        I256::from_i128(&env, 100)
-    );
+    assert_eq!(contract_client.get_voting_power_for_user(&user1), 100);
 
     // Bump the round
     contract_client.set_current_round(&26);
@@ -213,8 +192,8 @@ fn set_bump_round_flow() {
 
     // Set results for round 26
     let mut result26 = Map::new(&env);
-    result26.set(user1, I256::from_i128(&env, 5000));
-    result26.set(user2, I256::from_i128(&env, 6000));
+    result26.set(user1, 5000);
+    result26.set(user2, 6000);
     contract_client.set_neuron_result(&layer0, &neuron0, &result26);
 
     // Verify results are set
@@ -223,10 +202,7 @@ fn set_bump_round_flow() {
         result26
     );
     contract_client.calculate_voting_powers();
-    assert_eq!(
-        contract_client.get_voting_power_for_id(&user1),
-        I256::from_i128(&env, 5000)
-    );
+    assert_eq!(contract_client.get_voting_power_for_user(&user1), 5000);
 
     // Verify historical results are still accessible
     assert_eq!(
@@ -236,7 +212,7 @@ fn set_bump_round_flow() {
 }
 
 #[test]
-fn get_voting_power_for_id() {
+fn get_voting_power_for_user() {
     let env = Env::default();
     env.cost_estimate().budget().reset_unlimited();
 
@@ -255,26 +231,20 @@ fn get_voting_power_for_id() {
     contract_client.add_layer(
         &soroban_sdk::vec![
             &env,
-            (
-                neuron0.clone(),
-                I256::from_i128(&env, 1_000_000_000_000_000_000)
-            ),
-            (
-                neuron1.clone(),
-                I256::from_i128(&env, 1_000_000_000_000_000_000)
-            )
+            (neuron0.clone(), DECIMALS),
+            (neuron1.clone(), DECIMALS)
         ],
         &LayerAggregator::Sum,
     );
 
     let mut result0 = Map::new(&env);
-    result0.set(user1, I256::from_i128(&env, 100));
-    result0.set(user2, I256::from_i128(&env, 200));
+    result0.set(user1, 100);
+    result0.set(user2, 200);
     contract_client.set_neuron_result(&layer0, &neuron0, &result0);
 
     let mut result1 = Map::new(&env);
-    result1.set(user1, I256::from_i128(&env, 222));
-    result1.set(user2, I256::from_i128(&env, 333));
+    result1.set(user1, 222);
+    result1.set(user2, 333);
     contract_client.set_neuron_result(&layer0, &neuron1, &result1);
 
     // Verify results are set
@@ -288,18 +258,12 @@ fn get_voting_power_for_id() {
     );
     contract_client.calculate_voting_powers();
     // Verify correct voting powers are returned for each user
-    assert_eq!(
-        contract_client.get_voting_power_for_id(&user1),
-        I256::from_i32(&env, 322)
-    );
-    assert_eq!(
-        contract_client.get_voting_power_for_id(&user2),
-        I256::from_i32(&env, 533)
-    );
+    assert_eq!(contract_client.get_voting_power_for_user(&user1), 322);
+    assert_eq!(contract_client.get_voting_power_for_user(&user2), 533);
     // Verify error is returned for invalid user
     assert_eq!(
         contract_client
-            .try_get_voting_power_for_id(&99)
+            .try_get_voting_power_for_user(&99)
             .unwrap_err()
             .unwrap(),
         VotingSystemError::NGQResultForVoterMissing
@@ -324,51 +288,36 @@ fn calculate_voting_powers_clamps_negative_nqg_to_zero() {
     let layer1 = String::from_str(&env, "1");
 
     contract_client.add_layer(
-        &soroban_sdk::vec![
-            &env,
-            (
-                String::from_str(&env, "L0"),
-                I256::from_i128(&env, DECIMALS)
-            )
-        ],
+        &soroban_sdk::vec![&env, (String::from_str(&env, "L0"), DECIMALS)],
         &LayerAggregator::Sum,
     );
     contract_client.add_layer(
-        &soroban_sdk::vec![
-            &env,
-            (
-                String::from_str(&env, "L1"),
-                I256::from_i128(&env, DECIMALS)
-            )
-        ],
+        &soroban_sdk::vec![&env, (String::from_str(&env, "L1"), DECIMALS)],
         &LayerAggregator::Sum,
     );
 
     let mut layer0_result = Map::new(&env);
-    layer0_result.set(user_negative, I256::from_i128(&env, 100));
-    layer0_result.set(user_positive, I256::from_i128(&env, 200));
-    layer0_result.set(user_recovers, I256::from_i128(&env, -100));
+    layer0_result.set(user_negative, 100);
+    layer0_result.set(user_positive, 200);
+    layer0_result.set(user_recovers, -100);
     contract_client.set_neuron_result(&layer0, &neuron0, &layer0_result);
 
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_negative, I256::from_i128(&env, -500));
-    layer1_result.set(user_positive, I256::from_i128(&env, 300));
-    layer1_result.set(user_recovers, I256::from_i128(&env, 300));
+    layer1_result.set(user_negative, -500);
+    layer1_result.set(user_positive, 300);
+    layer1_result.set(user_recovers, 300);
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     contract_client.calculate_voting_powers();
 
+    assert_eq!(contract_client.get_voting_power_for_user(&user_negative), 0);
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_negative),
-        I256::from_i32(&env, 0)
+        contract_client.get_voting_power_for_user(&user_positive),
+        500
     );
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_positive),
-        I256::from_i32(&env, 500)
-    );
-    assert_eq!(
-        contract_client.get_voting_power_for_id(&user_recovers),
-        I256::from_i32(&env, 200)
+        contract_client.get_voting_power_for_user(&user_recovers),
+        200
     );
 }
 
@@ -389,34 +338,22 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
     let layer1 = String::from_str(&env, "1");
 
     contract_client.add_layer(
-        &soroban_sdk::vec![
-            &env,
-            (
-                String::from_str(&env, "L0"),
-                I256::from_i128(&env, DECIMALS)
-            )
-        ],
+        &soroban_sdk::vec![&env, (String::from_str(&env, "L0"), DECIMALS)],
         &LayerAggregator::Sum,
     );
     contract_client.add_layer(
-        &soroban_sdk::vec![
-            &env,
-            (
-                String::from_str(&env, "L1"),
-                I256::from_i128(&env, DECIMALS)
-            )
-        ],
+        &soroban_sdk::vec![&env, (String::from_str(&env, "L1"), DECIMALS)],
         &LayerAggregator::Sum,
     );
 
     let mut layer0_result = Map::new(&env);
-    layer0_result.set(user_negative, I256::from_i128(&env, -100));
-    layer0_result.set(user_positive, I256::from_i128(&env, 200));
+    layer0_result.set(user_negative, -100);
+    layer0_result.set(user_positive, 200);
     contract_client.set_neuron_result(&layer0, &neuron0, &layer0_result);
 
     // user_negative is absent from the last layer, so its -100 would never be clamped
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_positive, I256::from_i128(&env, 300));
+    layer1_result.set(user_positive, 300);
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     assert_eq!(
@@ -429,8 +366,8 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
 
     // Same user count per layer but different users must be rejected too
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_positive, I256::from_i128(&env, 300));
-    layer1_result.set(3, I256::from_i128(&env, 300));
+    layer1_result.set(user_positive, 300);
+    layer1_result.set(3, 300);
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     assert_eq!(
@@ -443,18 +380,51 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
 
     // With user sets aligned the calculation succeeds and the clamp applies
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_negative, I256::from_i128(&env, 50));
-    layer1_result.set(user_positive, I256::from_i128(&env, 300));
+    layer1_result.set(user_negative, 50);
+    layer1_result.set(user_positive, 300);
     contract_client.set_neuron_result(&layer1, &neuron0, &layer1_result);
 
     contract_client.calculate_voting_powers();
 
+    assert_eq!(contract_client.get_voting_power_for_user(&user_negative), 0);
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_negative),
-        I256::from_i32(&env, 0)
+        contract_client.get_voting_power_for_user(&user_positive),
+        500
+    );
+}
+
+#[test]
+fn calculate_voting_powers_rejects_overflow() {
+    let env = Env::default();
+    env.cost_estimate().budget().reset_unlimited();
+
+    let (contract_client, _admin) = deploy_contract(&env);
+    env.mock_all_auths();
+
+    let layer0 = String::from_str(&env, "0");
+    let neuron0 = String::from_str(&env, "0");
+    contract_client.add_layer(
+        &vec![&env, (String::from_str(&env, "Double"), 2 * DECIMALS)],
+        &LayerAggregator::Sum,
+    );
+
+    // The largest i64 weighted by 2.0 does not fit
+    let mut neuron_result = Map::new(&env);
+    neuron_result.set(1, i64::MAX);
+    contract_client.set_neuron_result(&layer0, &neuron0, &neuron_result);
+
+    assert_eq!(
+        contract_client
+            .try_calculate_voting_powers()
+            .unwrap_err()
+            .unwrap(),
+        VotingSystemError::ArithmeticOverflow
     );
     assert_eq!(
-        contract_client.get_voting_power_for_id(&user_positive),
-        I256::from_i32(&env, 500)
+        contract_client
+            .try_get_voting_powers()
+            .unwrap_err()
+            .unwrap(),
+        VotingSystemError::VotingPowersNotSet
     );
 }

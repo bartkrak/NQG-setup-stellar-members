@@ -26,4 +26,6 @@ pub enum VotingSystemError {
     LayerResultsUsersMismatch = 17,
     /// A voter id is not an active Stellar Membership token.
     NotAMember = 18,
+    /// A weighted, aggregated or summed value does not fit an `i64`.
+    ArithmeticOverflow = 19,
 }

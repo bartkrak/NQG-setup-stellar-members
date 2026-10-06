@@ -8,23 +8,40 @@ use soroban_sdk::{
     Address, Env, contract, contracterror, contractimpl, contracttype, panic_with_error,
 };
 
-/// The error codes of the real contract raised by `owner_of`.
+/// The error code of the real contract for a token never minted.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MembershipError {
     NonExistentToken = 200,
-    TokenRevoked = 206,
+}
+
+/// Same variants and values as the real `Status`.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Status {
+    Active = 0,
+    Revoked = 1,
+}
+
+/// The real `Member` has more fields (external accounts, bio, projects); the
+/// governance contract reads only `status`. `role` is here so the record is
+/// not a single-field map, as on the network.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Member {
+    pub status: Status,
+    pub role: u32,
 }
 
 #[contracttype]
 pub enum DataKey {
     NextTokenId,
-    /// `token_id` -> current address, absent once revoked
+    /// `token_id` -> current address, kept through a revocation
     Owner(u32),
     /// address -> `token_id`
     TokenOf(Address),
-    /// `token_id` -> (), written at mint and kept through a revocation
+    /// `token_id` -> member record
     Member(u32),
 }
 
@@ -47,31 +64,45 @@ impl MockMembership {
         env.storage()
             .instance()
             .set(&DataKey::TokenOf(to), &token_id);
-        env.storage()
-            .instance()
-            .set(&DataKey::Member(token_id), &());
+        env.storage().instance().set(
+            &DataKey::Member(token_id),
+            &Member {
+                status: Status::Active,
+                role: 0,
+            },
+        );
         token_id
     }
 
-    /// Release the address of `token_id` and keep its record, as the real
-    /// contract does.
-    pub fn revoke(env: &Env, token_id: u32) {
-        let owner = Self::owner_of(env, token_id);
-        env.storage().instance().remove(&DataKey::Owner(token_id));
-        env.storage().instance().remove(&DataKey::TokenOf(owner));
+    /// Revoke `token_id`, or reinstate it with `revoked` false. Only the
+    /// status changes, as in the real contract.
+    pub fn revoke(env: &Env, token_id: u32, revoked: bool) {
+        let mut member = Self::member(env, token_id);
+        member.status = if revoked {
+            Status::Revoked
+        } else {
+            Status::Active
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::Member(token_id), &member);
     }
 
-    /// The address holding `token_id`. Fails for a revoked token and for one
-    /// never minted, told apart by the error code.
+    /// The member record. Fails only for a token never minted.
+    pub fn member(env: &Env, token_id: u32) -> Member {
+        env.storage()
+            .instance()
+            .get(&DataKey::Member(token_id))
+            .unwrap_or_else(|| panic_with_error!(env, MembershipError::NonExistentToken))
+    }
+
+    /// The address holding `token_id`, revoked or not. Fails only for a token
+    /// never minted.
     pub fn owner_of(env: &Env, token_id: u32) -> Address {
-        let owner: Option<Address> = env.storage().instance().get(&DataKey::Owner(token_id));
-        match owner {
-            Some(owner) => owner,
-            None if env.storage().instance().has(&DataKey::Member(token_id)) => {
-                panic_with_error!(env, MembershipError::TokenRevoked)
-            }
-            None => panic_with_error!(env, MembershipError::NonExistentToken),
-        }
+        env.storage()
+            .instance()
+            .get(&DataKey::Owner(token_id))
+            .unwrap_or_else(|| panic_with_error!(env, MembershipError::NonExistentToken))
     }
 
     pub fn token_of(env: &Env, owner: Address) -> Option<u32> {

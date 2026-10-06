@@ -1,5 +1,5 @@
 use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
-use soroban_sdk::{Address, Env, I256, IntoVal, Map, String, vec};
+use soroban_sdk::{Address, Env, IntoVal, Map, String, vec};
 
 use governance::types::VotingSystemError;
 use governance::{VotingSystem, VotingSystemClient};
@@ -60,7 +60,7 @@ fn set_membership_contract_requires_admin() {
 /// one more member minted. Returns the newcomer's id.
 fn revoke_and_mint(env: &Env, contract_client: &VotingSystemClient) -> u32 {
     let members = MockMembershipClient::new(env, &contract_client.get_membership_contract());
-    members.revoke(&2);
+    members.revoke(&2, &true);
     let newcomer = members.mint(&Address::generate(env));
     assert_eq!(newcomer, MEMBERS);
     newcomer
@@ -76,20 +76,20 @@ fn neuron_results_take_only_active_members() {
     let newcomer = revoke_and_mint(&env, &contract_client);
 
     let mut accepted = Map::new(&env);
-    accepted.set(1, I256::from_i128(&env, 100));
-    accepted.set(newcomer, I256::from_i128(&env, 200));
+    accepted.set(1, 100);
+    accepted.set(newcomer, 200);
     contract_client.set_neuron_result(&layer0, &neuron0, &accepted);
     assert_eq!(
         contract_client.get_neuron_result(&layer0, &neuron0),
         accepted
     );
 
-    // A revoked member, then an id never minted: the whole map is refused
-    // and the stored result stays
+    // A revoked member (which still has an owner), then an id never minted:
+    // the whole map is refused and the stored result stays
     for rejected_id in [2, 42] {
         let mut rejected = Map::new(&env);
-        rejected.set(1, I256::from_i128(&env, 300));
-        rejected.set(rejected_id, I256::from_i128(&env, 400));
+        rejected.set(1, 300);
+        rejected.set(rejected_id, 400);
         assert_eq!(
             contract_client
                 .try_set_neuron_result(&layer0, &neuron0, &rejected)
@@ -102,4 +102,14 @@ fn neuron_results_take_only_active_members() {
             accepted
         );
     }
+
+    // Reinstated, member 2 is accepted again
+    MockMembershipClient::new(&env, &contract_client.get_membership_contract()).revoke(&2, &false);
+    let mut reinstated = Map::new(&env);
+    reinstated.set(2, 500);
+    contract_client.set_neuron_result(&layer0, &neuron0, &reinstated);
+    assert_eq!(
+        contract_client.get_neuron_result(&layer0, &neuron0),
+        reinstated
+    );
 }

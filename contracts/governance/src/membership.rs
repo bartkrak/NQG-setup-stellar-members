@@ -1,31 +1,35 @@
 //! The link to the Stellar Membership contract, whose token ids are the
 //! voter identifiers of this contract.
 
-use soroban_sdk::{Address, Env, IntoVal, Map, TryFromVal, Val, contractclient};
+use soroban_sdk::{Env, IntoVal, InvokeError, Map, Symbol, TryFromVal, Val, symbol_short, vec};
 
 use crate::ContractResult;
 use crate::storage::read_membership_contract;
 use crate::types::VotingSystemError;
 
-/// The reads of the Stellar Membership contract this contract relies on.
-/// Only the client generated from it is called, never the trait.
-#[allow(dead_code)]
-#[contractclient(name = "MembershipClient")]
-pub trait Membership {
-    /// The address holding `token_id`. Fails for a token never minted and
-    /// for a revoked one, so a success means an active member.
-    fn owner_of(env: Env, token_id: u32) -> Address;
-}
+/// `Status::Active` of the membership contract.
+const STATUS_ACTIVE: u32 = 0;
 
 /// Require that `member_id` names an active member.
 ///
-/// Any failure of the membership contract reads as `NotAMember`: a token
-/// never minted, a revoked one, or a membership contract that cannot
-/// answer.
+/// Reads `member(token_id).status`. The record is decoded as a map and only
+/// `status` is read, so changes to its other fields do not break this
+/// contract. Any failure reads as `NotAMember`: a token never minted, a
+/// revoked one, or a membership contract that cannot answer.
 pub(crate) fn require_member(env: &Env, member_id: u32) -> ContractResult<()> {
-    let membership = MembershipClient::new(env, &read_membership_contract(env));
-    match membership.try_owner_of(&member_id) {
-        Ok(Ok(_)) => Ok(()),
+    let record = env.try_invoke_contract::<Map<Symbol, Val>, InvokeError>(
+        &read_membership_contract(env),
+        &Symbol::new(env, "member"),
+        vec![env, member_id.into_val(env)],
+    );
+    let status = match record {
+        Ok(Ok(record)) => record
+            .get(symbol_short!("status"))
+            .and_then(|status| u32::try_from_val(env, &status).ok()),
+        _ => None,
+    };
+    match status {
+        Some(STATUS_ACTIVE) => Ok(()),
         _ => Err(VotingSystemError::NotAMember),
     }
 }
