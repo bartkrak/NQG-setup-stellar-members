@@ -13,11 +13,7 @@ use std::{path::Path, time::Instant};
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Prove {
-            input,
-            receipt,
-            output,
-        } => prove(cli.neuron, &input, &receipt, &output),
+        Command::Prove { input, output } => prove(cli.neuron, &input, &output),
         Command::ImageId => {
             println!("{}", cli.neuron.image_id());
             Ok(())
@@ -40,11 +36,10 @@ fn current_round() -> Result<u32> {
     bail!("CURRENT_ROUND is not set in the .env file")
 }
 
-fn prove(neuron: Neuron, input: &Path, receipt: &Path, output: &Path) -> Result<()> {
+fn prove(neuron: Neuron, input: &Path, output: &Path) -> Result<()> {
     let current_round = current_round()?;
     let start = Instant::now();
     let proven = neuron.prove(current_round, input)?;
-    files::save_receipt(receipt, &proven)?;
     let proof = seal::on_chain_proof(&proven)?;
     let mut json = journal::decode_journal(&proven.journal, neuron)?;
     json["journal"] = hex::encode(&proven.journal.bytes).into();
@@ -54,9 +49,8 @@ fn prove(neuron: Neuron, input: &Path, receipt: &Path, output: &Path) -> Result<
     eprintln!(
         "Proof generated in {:.2}s: {}",
         start.elapsed().as_secs_f64(),
-        receipt.display()
+        output.display()
     );
-    eprintln!("Scores written to {}", output.display());
     Ok(())
 }
 

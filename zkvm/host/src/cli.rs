@@ -27,8 +27,6 @@ pub enum Command {
     Prove {
         #[arg(long)]
         input: PathBuf,
-        #[arg(long)]
-        receipt: PathBuf,
         /// Decoded journal JSON. Existing files are not overwritten.
         #[arg(long)]
         output: PathBuf,

@@ -19,9 +19,6 @@ The proof is checked on chain by the Groth16 verifier contract from
 This repository does not contain that contract. It is deployed once and
 `neuron-result` calls it.
 
-[`zkvm/README.md`](zkvm/README.md) has more detail about the prover, the input
-formats, and Docker settings.
-
 
 ## Contents
 
@@ -35,7 +32,6 @@ formats, and Docker settings.
 - [Submit the scores](#submit-the-scores)
 - [Read the scores and the proof](#read-the-scores-and-the-proof)
 - [After changing a neuron](#after-changing-a-neuron)
-- [Troubleshooting](#troubleshooting)
 
 
 ## How it works
@@ -44,7 +40,6 @@ formats, and Docker settings.
 flowchart LR
     env[".env<br/>CURRENT_ROUND"] --> host
     input["private input JSON"] --> host["host prove<br/>(zkvm/)"]
-    host --> receipt["receipt .bin"]
     host --> output["output JSON<br/>currentRound, scores,<br/>journal, seal, imageId"]
     output --> script["submit-neuron.ts"]
     script -->|set_neuron_result| contract["neuron-result<br/>contract"]
@@ -81,13 +76,41 @@ For proving:
   rzup use r0vm 3.0.6
   ```
 
-- Docker. `r0vm` runs the image `risczero/risc0-groth16-prover:v2025-04-03.1`
+- Docker with BuildKit support (Docker Desktop or Colima with Docker Buildx).
+  Docker Desktop includes Buildx and BuildKit; no separate Buildx installation
+  is needed. For an existing Colima setup on macOS, install Buildx with
+  [Homebrew](https://formulae.brew.sh/formula/docker-buildx):
+
+  ```sh
+  brew install docker-buildx
+  mkdir -p "$HOME/.docker/cli-plugins"
+  ln -sfn "$(brew --prefix)/opt/docker-buildx/bin/docker-buildx" \
+    "$HOME/.docker/cli-plugins/docker-buildx"
+  docker buildx version
+  ```
+
+  The symlink makes the Homebrew plugin discoverable by Docker, as described
+  in the [Colima setup instructions](https://github.com/abiosoft/colima/blob/main/docs/FAQ.md#docker-buildx-plugin-is-missing).
+  If starting from scratch with Colima, first run `brew install colima docker`.
+
+
+  Guest compilation uses `risczero/risc0-guest-builder:r0.1.91.1`, pinned by
+  SHA-256 digest in [`zkvm/methods/build.rs`](zkvm/methods/build.rs).
+  `r0vm` separately runs `risczero/risc0-groth16-prover:v2025-04-03.1`
   to turn the proof into Groth16. On macOS with Colima, give the virtual
   machine 8 GiB of memory. With the default 2 GiB the container is killed:
 
   ```sh
   colima stop
   colima start --memory 8 --cpu 4
+  ```
+
+  After starting Docker Desktop or Colima, verify both the plugin and the
+  connection to Docker:
+
+  ```sh
+  docker buildx version
+  docker info
   ```
 
 For deploying and submitting:
@@ -102,9 +125,6 @@ For deploying and submitting:
 - Node.js 22.18 or newer. The submit script is TypeScript that Node runs
   directly. It has no runtime npm dependencies, so `npm install` is not needed.
 
-Run every command in this README from the repository root unless a step says
-otherwise.
-
 
 ## Build the prover
 
@@ -117,7 +137,7 @@ The binary is `zkvm/target/release/host`. It has two commands:
 | Command | What it does |
 | --- | --- |
 | `host image-id --neuron <neuron>` | Prints the Image ID of the guest compiled into this binary |
-| `host prove --neuron <neuron> --input <json> --receipt <bin> --output <json>` | Generates a proof |
+| `host prove --neuron <neuron> --input <json> --output <json>` | Generates a proof |
 
 `<neuron>` is `prior-voting-history` or `assigned-reputation`. If `--neuron`
 is left out, `prior-voting-history` is used, so always pass it.
@@ -179,7 +199,7 @@ stellar contract deploy \
 Save the printed contract id as `<VERIFIER_ID>`. Go back to this repository.
 
 The verifier accepts seals whose first 4 bytes match the selector built into
-its WASM. Receipts from `r0vm` 3.0.6 match the parameters shipped with the
+its WASM. Proofs from `r0vm` 3.0.6 match the parameters shipped with the
 verifier.
 
 ### A3. Put the Image IDs into the contract
@@ -312,7 +332,6 @@ Assigned reputation, the faster example:
 ```sh
 zkvm/target/release/host prove --neuron assigned-reputation \
   --input zkvm/data/example_assigned_reputation.json \
-  --receipt zkvm/artifacts/assigned-reputation-33.bin \
   --output zkvm/artifacts/assigned-reputation-33.json
 ```
 
@@ -321,16 +340,15 @@ Prior voting history:
 ```sh
 zkvm/target/release/host prove --neuron prior-voting-history \
   --input zkvm/data/example_prior_voting_history.json \
-  --receipt zkvm/artifacts/prior-voting-history-33.bin \
   --output zkvm/artifacts/prior-voting-history-33.json
 ```
 
 The files in `zkvm/data/` are synthetic. Use your private input file for real
 data. Proving takes several minutes. 
 
-`host prove` never overwrites files. Each run needs a new `--receipt` and
-`--output` path, and their parent directory must exist. The paths are checked
-after proving, so pick new names before you start. Putting the round in the
+`host prove` never overwrites files. Each run needs a new `--output` path, and
+its parent directory must exist. The path is checked after proving, so pick a
+new name before you start. Putting the round in the
 file name is a simple way to keep them apart.
 
 ### The output file
@@ -358,8 +376,8 @@ file name is a simple way to keep them apart.
 | `seal` | Groth16 proof with the 4-byte selector, hex |
 | `imageId` | Image ID of the guest that produced the proof |
 
-Keep the `--output` file and the `.bin` receipt. The output file is what you
-submit. The receipt can be checked again later with RISC Zero tools.
+Keep the `--output` file. It is what you submit, and it is the only copy of
+the proof.
 
 
 ## Submit the scores
@@ -435,10 +453,10 @@ The `--neuron` values on chain are `PriorVotingHistory` and
 
 ## After changing a neuron
 
-Any change to a guest in `zkvm/methods/` or to a core crate in `zkvm/core/`
-changes the Image ID, even removing a comment line, because panic messages in
-the binary contain line numbers. A dependency update or a different compiler
-can change it too.
+Changes to a guest in `zkvm/methods/` or to a core crate in `zkvm/core/`
+can change the Image ID, even removing a comment line, because panic messages
+in the binary can contain line numbers. A dependency update or a change to
+the pinned Docker builder can change it too.
 
 After such a change:
 
@@ -454,20 +472,3 @@ After such a change:
 The contract has no upgrade function and the Image IDs cannot be changed after
 deployment.
 
-
-## Troubleshooting
-
-| Problem | Cause and fix |
-| --- | --- |
-| `No .env file in the working directory or its parents` | Create `.env` with `CURRENT_ROUND=<n>` in the repository root |
-| `CURRENT_ROUND is not set in the .env file` | Add the line to `.env`. A shell `export` is ignored |
-| Prior voting history rejects the round | It needs `CURRENT_ROUND` of at least 8 |
-| ``unknown field `currentRound` `` | Remove `currentRound` from the input file. The round comes from `.env` |
-| Groth16 step fails or the container is killed | Start Docker. On Colima give it 8 GiB: `colima start --memory 8 --cpu 4` |
-| Container sees an empty `/mnt` | Set `RISC0_WORK_DIR` to a folder in your home directory |
-| Output or receipt file already exists | Choose new paths; files are never overwritten |
-| `set_neuron_result` fails in `verify` | The Image ID in the contract differs from the one in `imageId`, `--neuron` is wrong, or the seal selector does not match the verifier. Compare `host image-id` with the contract constants |
-| `stellar CLI not found` | Install the Stellar CLI and make sure `stellar` is on `PATH` |
-| `membership token ... must be a u32` | Ids must be decimal integers up to 4294967295 |
-| `bad score ...` | A score is not a plain decimal, such as exponent notation |
-| `NotFound` from a getter | Nothing is stored for this neuron and round |

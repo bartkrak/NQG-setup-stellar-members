@@ -1150,7 +1150,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assigned-reputation-core",
- "bincode",
  "clap",
  "dotenvy",
  "hex",
