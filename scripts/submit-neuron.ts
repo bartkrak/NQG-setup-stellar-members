@@ -9,20 +9,31 @@ type Output = {
   seal: string;
 }
 
+/** `host prove --neuron` name to the `guest` the governance contract expects. */
 const NEURONS: Record<string, string> = {
   "prior-voting-history": "PriorVotingHistory",
   "assigned-reputation": "AssignedReputation",
+  "trust-graph": "TrustGraph",
 };
 
+/** Neuron results in the governance contract are `i64` with 6 decimals. */
+const DECIMALS = 6;
+const I64_MIN = -(2n ** 63n);
+const I64_MAX = 2n ** 63n - 1n;
+
 const USAGE = `Usage:
-  node zkvm-contracts/scripts/submit-neuron.ts \\
-    --neuron assigned-reputation|prior-voting-history \\
+  node scripts/submit-neuron.ts \\
+    --neuron prior-voting-history|assigned-reputation|trust-graph \\
     --output <output.json> \\
+    --layer-id <id> \\
+    --neuron-id <id> \\
     --contract <id> \\
     --source <account> \\
     --network <network>`;
 
-const FLAGS = ["neuron", "output", "contract", "source", "network"] as const;
+const FLAGS = [
+  "neuron", "output", "layer-id", "neuron-id", "contract", "source", "network",
+] as const;
 
 type Flags = Record<(typeof FLAGS)[number], string>;
 
@@ -43,12 +54,16 @@ function parseFlags(): Flags {
   return values as Flags;
 }
 
-function scaleTo1e18(token: string): string {
+function scaleToI64(token: string): string {
   const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(token);
   if (!match) throw new Error(`bad score ${token}`);
   const [, sign, whole, fraction = ""] = match;
-  const value = BigInt(whole + fraction.padEnd(18, "0").slice(0, 18));
-  return value === 0n ? "0" : `${sign}${value}`;
+  const magnitude = BigInt(whole + fraction.padEnd(DECIMALS, "0").slice(0, DECIMALS));
+  const value = sign ? -magnitude : magnitude;
+  if (value < I64_MIN || value > I64_MAX) {
+    throw new Error(`score ${token} does not fit an i64 with ${DECIMALS} decimals`);
+  }
+  return value.toString();
 }
 
 function readOutput(json: string): Output {
@@ -75,19 +90,27 @@ function readOutput(json: string): Output {
   };
 }
 
+/**
+ * The scores as a JSON map for the CLI. Built by hand because the values go
+ * out as JSON numbers, which the CLI reads as `i64`, and a JS number loses
+ * digits above 2^53.
+ */
 function scaledScoresJson(entries: Array<[string, string]>): string {
-  const scores: Record<string, string> = {};
-  for (const [id, score] of entries) {
+  const fields = entries.map(([id, score]) => {
     if (!/^(0|[1-9]\d*)$/.test(id) || BigInt(id) > 0xffff_ffffn) {
       throw new Error(`membership token ${id} must be a u32`);
     }
-    scores[id] = scaleTo1e18(score);
-  }
-  return JSON.stringify(scores);
+    return `${JSON.stringify(id)}:${scaleToI64(score)}`;
+  });
+  return `{${fields.join(",")}}`;
 }
 
-function stellar(args: string[]) {
-  const result = spawnSync("stellar", args, { stdio: "inherit" });
+/** Run the stellar CLI. With `capture`, return its stdout instead of showing it. */
+function stellar(args: string[], capture = false): string {
+  const result = spawnSync("stellar", args, {
+    stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
+    encoding: "utf8",
+  });
   if (result.error) {
     const notFound = (result.error as NodeJS.ErrnoException).code === "ENOENT";
     throw notFound ? new Error("stellar CLI not found") : result.error;
@@ -95,32 +118,55 @@ function stellar(args: string[]) {
   if (result.status !== 0) {
     throw new Error(`stellar failed: ${result.signal ?? `exit code ${result.status}`}`);
   }
+  return capture ? result.stdout.trim() : "";
+}
+
+function invokeArgs(flags: Flags, send: boolean, fn: string, args: string[]): string[] {
+  return [
+    "contract", "invoke",
+    ...(send ? [] : ["--send=no"]),
+    "--id", flags.contract,
+    "--source", flags.source,
+    "--network", flags.network,
+    "--",
+    fn,
+    ...args,
+  ];
 }
 
 function main() {
   const flags = parseFlags();
-  const neuron = NEURONS[flags.neuron];
-  if (!neuron) throw new Error(`unknown neuron ${flags.neuron}`);
+  const guest = NEURONS[flags.neuron];
+  if (!guest) throw new Error(`unknown neuron ${flags.neuron}`);
+  const slot = ["--layer_id", flags["layer-id"], "--neuron_id", flags["neuron-id"]];
 
   const { currentRound, scores: entries, journal, seal } = readOutput(
     readFileSync(flags.output, "utf8"),
   );
   const scores = scaledScoresJson(entries);
 
-  console.log(`Sending ${neuron} round ${currentRound} scores...`);
-  stellar([
-    "contract", "invoke",
-    "--id", flags.contract,
-    "--source", flags.source,
-    "--network", flags.network,
-    "--",
-    "set_neuron_result",
-    "--neuron", neuron,
-    "--round", currentRound,
+  // The contract stores the result under its active round, which is not an
+  // argument; refuse an output proven for another round.
+  const activeRound = stellar(invokeArgs(flags, false, "get_current_round", []), true);
+  if (activeRound !== currentRound) {
+    throw new Error(
+      `the output is for round ${currentRound}, the contract's active round is ${activeRound}`,
+    );
+  }
+  // The contract accepts any layer and neuron id; check this one exists.
+  const { name } = JSON.parse(stellar(invokeArgs(flags, false, "get_neuron", slot), true));
+
+  console.log(
+    `Sending ${guest} round ${currentRound} scores to layer ${flags["layer-id"]} ` +
+      `neuron ${flags["neuron-id"]} (${name})...`,
+  );
+  stellar(invokeArgs(flags, true, "set_neuron_result", [
+    ...slot,
     "--result", scores,
+    "--guest", guest,
     "--journal", journal,
     "--seal", seal,
-  ]);
+  ]));
 }
 
 try {

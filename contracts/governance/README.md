@@ -77,6 +77,10 @@ neuron and round. A later upload for the same neuron and round replaces both.
 
 The journal itself is not stored, only its digest; it stays readable in the `set_neuron_result` transaction.
 
+[`scripts/submit-neuron.ts`](../../scripts/submit-neuron.ts) sends a prover output file: it checks the round against
+`get_current_round` and the layer and neuron against `get_neuron`, scales the scores to 6 decimals and calls
+`set_neuron_result`. The [root README](../../README.md) walks through the whole flow, from proving to voting powers.
+
 A changed guest, core crate, dependency or builder image can change an Image ID. Compare the constants with
 `host image-id --neuron <n>` before deploying, and `upgrade` the contract when they change: with a stale Image ID every
 upload for that guest fails with `InvalidProof`.
