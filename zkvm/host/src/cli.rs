@@ -19,6 +19,7 @@ pub struct Cli {
 pub enum Neuron {
     PriorVotingHistory,
     AssignedReputation,
+    TrustGraph,
 }
 
 #[derive(Subcommand)]

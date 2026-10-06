@@ -75,6 +75,11 @@ impl Neuron {
                     methods::ASSIGNED_REPUTATION_GUEST_ELF,
                 )
             }
+            Neuron::TrustGraph => {
+                let input: trust_graph_core::Input = files::read_json(input)?;
+                input.validate()?;
+                proof::prove(current_round, &input, methods::TRUST_GRAPH_GUEST_ELF)
+            }
         }
     }
 
@@ -82,6 +87,7 @@ impl Neuron {
         let id = match self {
             Neuron::PriorVotingHistory => methods::PRIOR_VOTING_HISTORY_GUEST_ID,
             Neuron::AssignedReputation => methods::ASSIGNED_REPUTATION_GUEST_ID,
+            Neuron::TrustGraph => methods::TRUST_GRAPH_GUEST_ID,
         };
         Digest::from(id)
     }

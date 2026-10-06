@@ -13,6 +13,8 @@ fn main() {
     println!("cargo:rerun-if-changed=../core/prior-voting-history/Cargo.toml");
     println!("cargo:rerun-if-changed=../core/assigned-reputation/src");
     println!("cargo:rerun-if-changed=../core/assigned-reputation/Cargo.toml");
+    println!("cargo:rerun-if-changed=../core/trust-graph/src");
+    println!("cargo:rerun-if-changed=../core/trust-graph/Cargo.toml");
     println!("cargo:rerun-if-env-changed=RISC0_DOCKER_CONTAINER_TAG");
     
     let manifest_dir = PathBuf::from(
@@ -30,6 +32,7 @@ fn main() {
 
     embed_methods_with_options(HashMap::from([
         ("prior_voting_history_guest", opts.clone()),
-        ("assigned_reputation_guest", opts),
+        ("assigned_reputation_guest", opts.clone()),
+        ("trust_graph_guest", opts),
     ]));
 }
