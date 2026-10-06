@@ -443,9 +443,8 @@ mod tests {
     #[test]
     fn example_inputs_are_valid() {
         for (json, users) in [
-            (include_str!("../../../data/example_trust_graph_4.json"), 4),
             (
-                include_str!("../../../data/example_trust_graph_40.json"),
+                include_str!("../../../data/example_trust_graph.json"),
                 40,
             ),
         ] {
