@@ -6,7 +6,7 @@ extern crate alloc;
 use crate::fixed_mul_floor::fixed_mul_floor;
 use alloc::string::ToString;
 use soroban_sdk::{
-    Address, BytesN, ContractExecutable, Env, Map, String, Vec, contract, contractimpl,
+    Address, Bytes, BytesN, ContractExecutable, Env, Map, String, Vec, contract, contractimpl,
     contracttype,
 };
 
@@ -20,11 +20,14 @@ use crate::neural_governance::traits::Governance;
 use crate::neural_governance::{Layer, NGQ, Neuron, aggregate_result};
 use crate::storage::{
     LayerKeyData, NeuronKeyData, NeuronResultKeyData, VotingPowersKeyData, read_layer,
-    read_membership_contract, read_neural_governance, read_neuron, read_neuron_result,
-    read_voting_powers, remove_layer, remove_neuron, write_layer, write_membership_contract,
-    write_neural_governance, write_neuron, write_neuron_result, write_voting_powers,
+    read_membership_contract, read_neural_governance, read_neuron, read_neuron_proof,
+    read_neuron_result, read_verifier, read_voting_powers, remove_layer, remove_neuron,
+    write_layer, write_membership_contract, write_neural_governance, write_neuron,
+    write_neuron_proof, write_neuron_result, write_verifier, write_voting_powers,
 };
 use crate::types::VotingSystemError;
+use crate::verifier::verify_proof;
+pub use crate::verifier::{NeuronGuest, NeuronProof};
 
 mod admin;
 mod fixed_mul_floor;
@@ -32,6 +35,7 @@ mod membership;
 mod neural_governance;
 mod storage;
 pub mod types;
+mod verifier;
 
 /// Neuron results, weights and voting powers are `i64` fixed point numbers
 /// with 6 decimals: 1.0 is `1_000_000`, the largest value about 9.2 trillion.
@@ -56,8 +60,13 @@ pub enum DataKey {
     /// storage type: instance
     /// Address of the Stellar Membership contract whose token ids identify voters
     MembershipContract,
+    /// storage type: instance
+    /// Address of the RISC Zero Groth16 verifier contract that checks neuron result proofs
+    Verifier,
     NeuronKey(NeuronKeyData),
     NeuronResultKey(NeuronResultKeyData),
+    /// storage type: persistent
+    NeuronProofKey(NeuronResultKeyData),
     LayerKey(LayerKeyData),
     VotingPowers(VotingPowersKeyData),
 }
@@ -71,14 +80,17 @@ impl VotingSystem {
     /// * `admin`: account allowed to configure the contract and upload neuron results.
     /// * `current_round`: the active voting round.
     /// * `membership_contract`: Stellar Membership contract whose token ids identify voters.
+    /// * `verifier`: RISC Zero Groth16 verifier contract that checks the proof of every neuron result.
     pub fn __constructor(
         env: Env,
         admin: Address,
         current_round: u32,
         membership_contract: Address,
+        verifier: Address,
     ) {
         set_admin(&env, &admin);
         write_membership_contract(&env, &membership_contract);
+        write_verifier(&env, &verifier);
 
         let neural_governance = NGQ::new(&env);
         env.storage()
@@ -116,6 +128,21 @@ impl VotingSystem {
         require_admin(&env);
 
         write_membership_contract(&env, &membership_contract);
+    }
+
+    /// Get the RISC Zero Groth16 verifier contract that checks neuron result proofs.
+    pub fn get_verifier(env: &Env) -> Address {
+        read_verifier(env)
+    }
+
+    /// Change the Groth16 verifier contract. Admin only.
+    ///
+    /// Every upload is checked by it, so a wrong address makes every upload
+    /// fail with `InvalidProof`.
+    pub fn set_verifier(env: Env, verifier: Address) {
+        require_admin(&env);
+
+        write_verifier(&env, &verifier);
     }
 
     /// Get the voting power (NQG score) of a member for the active round,
@@ -224,22 +251,39 @@ impl Governance for VotingSystem {
         Self::get_neuron_result_round(env, layer_id, neuron_id, Self::get_current_round(env))
     }
 
+    fn get_neuron_proof_round(
+        env: &Env,
+        layer_id: String,
+        neuron_id: String,
+        round: u32,
+    ) -> Result<NeuronProof, VotingSystemError> {
+        read_neuron_proof(env, &layer_id, &neuron_id, round)
+    }
+
+    fn get_neuron_proof(
+        env: &Env,
+        layer_id: String,
+        neuron_id: String,
+    ) -> Result<NeuronProof, VotingSystemError> {
+        Self::get_neuron_proof_round(env, layer_id, neuron_id, Self::get_current_round(env))
+    }
+
     fn set_neuron_result(
         env: Env,
         layer_id: String,
         neuron_id: String,
         result: Map<u32, i64>,
+        guest: NeuronGuest,
+        journal: Bytes,
+        seal: Bytes,
     ) -> Result<(), VotingSystemError> {
         require_admin(&env);
         require_members(&env, &result)?;
+        let proof = verify_proof(&env, guest, &journal, seal)?;
 
-        write_neuron_result(
-            &env,
-            &layer_id,
-            &neuron_id,
-            Self::get_current_round(&env),
-            &result,
-        );
+        let round = Self::get_current_round(&env);
+        write_neuron_result(&env, &layer_id, &neuron_id, round, &result);
+        write_neuron_proof(&env, &layer_id, &neuron_id, round, &proof);
         Ok(())
     }
 
