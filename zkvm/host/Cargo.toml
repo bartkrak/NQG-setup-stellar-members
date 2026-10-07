@@ -1,0 +1,18 @@
+[package]
+name = "host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+assigned-reputation-core = { path = "../core/assigned-reputation" }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+methods = { path = "../methods" }
+prior-voting-history-core = { path = "../core/prior-voting-history" }
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["client", "disable-dev-mode"] }
+serde = "1.0"
+serde_json = "1.0"
+trust-graph-core = { path = "../core/trust-graph" }
+dotenvy = "0.15"

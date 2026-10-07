@@ -7,7 +7,9 @@ the [Neural Quorum Governance](https://stellarcommunityfund.gitbook.io/module-li
 
 Currently, because
 of [resource constraints](https://developers.stellar.org/docs/reference/resource-limits-fees#resource-limits) and to
-preserve voter privacy, neurons are computed off-chain and uploaded to the contract.
+preserve voter privacy, neurons are computed off-chain and uploaded to the contract. Each neuron is computed by a RISC
+Zero guest program (`zkvm/` in this repository), and every upload carries its Groth16 proof, which the contract checks
+with a verifier contract before storing anything. See [Proofs](#proofs).
 
 The contract adds up results of each layer and computes the final voting power (NQG score) for each voter. This voting
 power is stored on-chain per round for future reference.
@@ -29,17 +31,18 @@ and prints `i64` values as JSON numbers, for example `1000000`.
 
 | Function | Who | What it does |
 |---|---|---|
-| `__constructor(admin, current_round, membership_contract)` | deployer | Sets the admin, the active round and the Stellar Membership contract. |
+| `__constructor(admin, current_round, membership_contract, verifier)` | deployer | Sets the admin, the active round, the Stellar Membership contract and the Groth16 verifier contract. |
 | `add_layer(raw_neurons, layer_aggregator)` | admin | Adds a layer of neurons (`[(name, weight: i64)]`, aggregated by `Sum` or `Product`). |
 | `remove_layer(layer_id)` | admin | Removes a layer and its neurons. |
-| `set_neuron_result(layer_id, neuron_id, result: Map<u32, i64>)` | admin | Stores one neuron's results for the active round. Every key must be an active member, see below. |
+| `set_neuron_result(layer_id, neuron_id, result: Map<u32, i64>, guest, journal, seal)` | admin | Stores one neuron's results and their proof for the active round. Every key must be an active member, see below, and the verifier must accept the proof, see [Proofs](#proofs). |
 | `calculate_voting_powers()` | admin | Runs all layers over the active round's neuron results and stores the voting powers for that round. |
 | `get_voting_power_for_user(member_id: u32) -> i64` | anyone | Voting power (NQG score) of one member for the active round. |
 | `get_voting_powers() -> Map<u32, i64>` | anyone | Voting powers of all members for the active round. |
 | `set_current_round(round)` / `get_current_round()` | admin / anyone | Switches the active round. Data of other rounds is kept. |
 | `set_membership_contract(address)` / `get_membership_contract()` | admin / anyone | Points the contract at another Stellar Membership contract. |
+| `set_verifier(address)` / `get_verifier()` | admin / anyone | Points the contract at another Groth16 verifier contract. |
 | `transfer_admin(new_admin)`, `upgrade(wasm_hash)` | admin | Administration. |
-| `get_layer`, `get_neuron`, `get_neuron_result[_round]`, `get_layer_result`, `get_neural_governance` | anyone | Inspect the setup and intermediate results. |
+| `get_layer`, `get_neuron`, `get_neuron_result[_round]`, `get_neuron_proof[_round]`, `get_layer_result`, `get_neural_governance` | anyone | Inspect the setup, intermediate results and the proofs they were uploaded with. |
 
 ### Errors
 
@@ -53,6 +56,34 @@ and prints `i64` values as JSON numbers, for example `1000000`.
 | 17 | `LayerResultsUsersMismatch` | `calculate_voting_powers` when layers do not cover the same members. |
 | 18 | `NotAMember` | `set_neuron_result` with an id that is not an active member. |
 | 19 | `ArithmeticOverflow` | `calculate_voting_powers` or `get_layer_result` when a value does not fit an `i64`. |
+| 20 | `InvalidProof` | `set_neuron_result` when the verifier rejects the proof or cannot answer. |
+| 21 | `NeuronProofNotSet` | `get_neuron_proof[_round]` when no proof was stored for that neuron and round. |
+
+## Proofs
+
+`set_neuron_result` takes, next to the result, the proof from `host prove` (`zkvm/`):
+
+- `guest`: the guest program that computed the result, `PriorVotingHistory`, `AssignedReputation` or `TrustGraph`.
+  Each has its Image ID fixed as a constant in [`src/verifier.rs`](src/verifier.rs).
+- `journal`: the guest's public output (`journal` in the prover output JSON, hex on the CLI).
+- `seal`: the 4-byte verifier selector followed by the Groth16 seal (`seal` in the output JSON).
+
+The contract computes `sha256(journal)` itself and calls `verify(seal, image_id, journal_digest)` on the
+[RISC Zero Groth16 verifier](https://github.com/NethermindEth/stellar-risc0-verifier) set by the constructor (its
+third argument is the digest, despite being named `journal`). The order is: admin signature, membership of every key,
+proof. If any of them fails nothing is written. Otherwise the result is stored as before and
+`NeuronProof { seal, image_id, journal_digest }` is stored next to it in persistent storage, under the same layer,
+neuron and round. A later upload for the same neuron and round replaces both.
+
+The journal itself is not stored, only its digest; it stays readable in the `set_neuron_result` transaction.
+
+[`scripts/submit-neuron.ts`](../../scripts/submit-neuron.ts) sends a prover output file: it checks the round against
+`get_current_round` and the layer and neuron against `get_neuron`, scales the scores to 6 decimals and calls
+`set_neuron_result`. The [root README](../../README.md) walks through the whole flow, from proving to voting powers.
+
+A changed guest, core crate, dependency or builder image can change an Image ID. Compare the constants with
+`host image-id --neuron <n>` before deploying, and `upgrade` the contract when they change: with a stale Image ID every
+upload for that guest fails with `InvalidProof`.
 
 ## Connecting to Stellar Membership
 
@@ -98,12 +129,14 @@ the `nqg` test mock should return `i64` as well.
 
 ### Deploying the pair
 
-Each constructor takes the other contract's address, so one has to go first. The membership contract tolerates a wrong
+The Groth16 verifier has to be deployed first (or an existing deployment chosen), since NQG takes its address in
+`--verifier`. Then, between NQG and the membership contract, each constructor takes the other contract's address, so
+one has to go first. The membership contract tolerates a wrong
 NQG address (the score reads 0 and `set_nqg_contract` fixes it), while NQG must know the real membership contract to
 validate anything. So:
 
 1. Deploy the membership contract with any placeholder `--nqg_contract` (for example the admin's address).
-2. Deploy NQG with the membership contract address (`--membership_contract`).
+2. Deploy NQG with the membership contract address (`--membership_contract`) and the verifier (`--verifier`).
 3. Call `set_nqg_contract` on the membership contract with the NQG address.
 
 If the membership contract is later redeployed to a new address, point NQG at it with `set_membership_contract`
@@ -208,6 +241,10 @@ Clean up with `stellar container stop local`.
   `set_current_round`. Moving to a new round makes scores read as missing until `calculate_voting_powers` runs for it.
 - **Validation happens at upload time.** A member revoked after their results were uploaded keeps their score for that
   round in NQG. The membership contract shows 0 for a revoked member regardless.
+- **The proof does not cover `result`.** The verifier checks that the guest committed the journal, but the contract
+  does not decode the journal (risc0 serde of string ids and `f64` scores) and does not compare it, or its round, with
+  `result` and the active round. Anyone can check them off-chain against the journal in the transaction. Nothing ties
+  a guest to a neuron either: `guest` is chosen per upload.
 - **One membership read per voter.** Each uploaded id costs one `member` call, and a transaction has a ledger read
   limit, so a single `set_neuron_result` covers a limited number of members. Fine for small rounds; large rounds will
   need a different approach.

@@ -1,5 +1,7 @@
 .idea
+node_modules
 target
 .DS_store
 **/test_snapshots/**
 .env
+prove.txt

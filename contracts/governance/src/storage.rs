@@ -2,9 +2,11 @@ use soroban_sdk::{Address, Env, Map, String};
 
 use crate::neural_governance::{Layer, NGQ, Neuron};
 use crate::storage::key_data::{
-    get_layer_key, get_neuron_key, get_neuron_result_key, get_voting_powers_key,
+    get_layer_key, get_neuron_key, get_neuron_proof_key, get_neuron_result_key,
+    get_voting_powers_key,
 };
 use crate::types::VotingSystemError;
+use crate::verifier::NeuronProof;
 use crate::{ContractResult, DataKey};
 
 pub use crate::storage::key_data::{
@@ -77,6 +79,30 @@ pub(crate) fn write_neuron_result(
     env.storage().temporary().set(&key, result);
 }
 
+pub(crate) fn read_neuron_proof(
+    env: &Env,
+    layer_id: &String,
+    neuron_id: &String,
+    round: u32,
+) -> ContractResult<NeuronProof> {
+    let key = get_neuron_proof_key(layer_id, neuron_id, round);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .ok_or(VotingSystemError::NeuronProofNotSet)
+}
+
+pub(crate) fn write_neuron_proof(
+    env: &Env,
+    layer_id: &String,
+    neuron_id: &String,
+    round: u32,
+    proof: &NeuronProof,
+) {
+    let key = get_neuron_proof_key(layer_id, neuron_id, round);
+    env.storage().persistent().set(&key, proof);
+}
+
 pub(crate) fn read_neural_governance(env: &Env) -> ContractResult<NGQ> {
     env.storage()
         .instance()
@@ -102,6 +128,15 @@ pub(crate) fn write_membership_contract(env: &Env, membership_contract: &Address
     env.storage()
         .instance()
         .set(&DataKey::MembershipContract, membership_contract);
+}
+
+/// Set by the constructor, so always present.
+pub(crate) fn read_verifier(env: &Env) -> Address {
+    env.storage().instance().get(&DataKey::Verifier).unwrap()
+}
+
+pub(crate) fn write_verifier(env: &Env, verifier: &Address) {
+    env.storage().instance().set(&DataKey::Verifier, verifier);
 }
 
 pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<u32, i64>> {

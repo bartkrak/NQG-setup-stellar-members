@@ -1,0 +1,17 @@
+{
+  "users": [
+    {
+      "id": "0",
+      "tier": 3,
+      "discord_roles": []
+    },
+    {
+      "id": "1",
+      "tier": 2,
+      "discord_roles": [
+        "SDF",
+        "West Africa Ambassador"
+      ]
+    }
+  ]
+}
