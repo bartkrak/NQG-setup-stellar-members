@@ -31,8 +31,8 @@ contract.
 
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
+- [The zkVM prover](#the-zkvm-prover)
 - [Build the prover](#build-the-prover)
-- [Deploy the contracts](#deploy-the-contracts)
 - [Generate a proof](#generate-a-proof)
 - [Submit the scores](#submit-the-scores)
 - [Calculate the voting powers](#calculate-the-voting-powers)
@@ -90,45 +90,47 @@ For proving:
   rzup use r0vm 3.0.6
   ```
 
-- Docker with BuildKit support (Docker Desktop or Colima with Docker Buildx).
-  Docker Desktop includes Buildx and BuildKit; no separate Buildx installation
-  is needed. For an existing Colima setup on macOS, install Buildx with
+- Docker with BuildKit support. Choose the path for your setup:
+
+  **Path 1: You already have Docker Desktop**
+
+  Start Docker Desktop. It includes Buildx and BuildKit, so no separate
+  Docker or Buildx installation is needed. Continue to the verification
+  commands below.
+
+  **Path 2: You do not have Docker Desktop (Apple Silicon Mac)**
+
+  Install Colima, the Docker CLI and Buildx with
   [Homebrew](https://formulae.brew.sh/formula/docker-buildx):
 
   ```sh
-  brew install docker-buildx
+  brew install colima docker docker-buildx
   mkdir -p "$HOME/.docker/cli-plugins"
   ln -sfn "$(brew --prefix)/opt/docker-buildx/bin/docker-buildx" \
     "$HOME/.docker/cli-plugins/docker-buildx"
-  docker buildx version
   ```
 
-  The symlink makes the Homebrew plugin discoverable by Docker, as described
-  in the [Colima setup instructions](https://github.com/abiosoft/colima/blob/main/docs/FAQ.md#docker-buildx-plugin-is-missing).
-  If starting from scratch with Colima, first run `brew install colima docker`.
+  If you already use Colima, install only missing packages. The symlink
+  makes the Homebrew plugin discoverable by Docker, as described in the
+  [Colima setup instructions](https://github.com/abiosoft/colima/blob/main/docs/FAQ.md#docker-buildx-plugin-is-missing).
 
-  Docker is used twice. Building the prover compiles the guests in
-  `risczero/risc0-guest-builder:r0.1.91.1`, pinned by SHA-256 digest in
-  [`zkvm/methods/build.rs`](zkvm/methods/build.rs). Proving runs
-  `risczero/risc0-groth16-prover:v2025-04-03.1`, which `r0vm` starts to turn
-  the proof into Groth16.
-
-  On macOS with Colima, give the virtual machine 8 GiB of memory; with the
-  default 2 GiB the Groth16 container is killed. On Apple Silicon also enable
-  Rosetta: the guest builder exists only for `linux/amd64`, and without
-  Rosetta Colima emulates it with QEMU, which is much slower:
+  Give the virtual machine 8 GiB of memory; with the default 2 GiB the
+  Groth16 container is killed. Enable Rosetta because the guest builder
+  exists only for `linux/amd64`, and QEMU emulation is much slower:
 
   ```sh
-  colima stop
-  colima start --vz-rosetta --memory 8 --cpu 4
+  colima start --vm-type vz --vz-rosetta --memory 8 --cpu 4
   ```
 
-  Later `colima start` calls keep these settings. If Colima refuses
-  `--vz-rosetta` because the existing virtual machine uses QEMU, recreate it
-  with `colima delete` and run the start command again. This deletes the
-  images and containers stored in Colima.
+  If Colima is already running, run `colima stop` before applying these
+  settings. Later `colima start` calls keep them. If the existing virtual
+  machine uses QEMU and refuses these settings, recreate it with
+  `colima delete` and run the start command again. This deletes the images
+  and containers stored in Colima.
 
-  After starting Docker Desktop or Colima, verify both the plugin and the
+  **Verify either path**
+
+  After starting Docker Desktop or Colima, verify the plugin and the
   connection to Docker:
 
   ```sh
@@ -136,17 +138,38 @@ For proving:
   docker info
   ```
 
-For deploying and submitting:
+  Docker is used twice. Building the prover compiles the guests in
+  `risczero/risc0-guest-builder:r0.1.91.1`, pinned by SHA-256 digest in
+  [`zkvm/methods/build.rs`](zkvm/methods/build.rs). Proving runs
+  `risczero/risc0-groth16-prover:v2025-04-03.1`, which `r0vm` starts to turn
+  the proof into Groth16.
+
+For submitting:
 
 - [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/install-cli).
-  Also add the WASM target:
-
-  ```sh
-  rustup target add wasm32v1-none
-  ```
-
 - Node.js 22.18 or newer. The submit script is TypeScript that Node runs
   directly. It has no runtime npm dependencies, so `npm install` is not needed.
+
+
+## The zkVM prover
+
+The current prover supports three neurons:
+
+| `--neuron` | Private input | Scoring logic | Example input |
+| --- | --- | --- | --- |
+| `prior-voting-history` | `users`, `usersRoundHistory`, `votesPerRound`, `submittersPerRound` | Voting-history and active-participation bonuses | [`example_prior_voting_history.json`](zkvm/data/example_prior_voting_history.json) |
+| `assigned-reputation` | `users`, each with `id`, `tier`, `discord_roles` | Reputation-tier bonus plus Discord-role bonuses | [`example_assigned_reputation.json`](zkvm/data/example_assigned_reputation.json) |
+| `trust-graph` | `users`, `trustedForUser` | Normalized PageRank with bonuses for trust from highly trusted users and filled trust lists | [`example_trust_graph.json`](zkvm/data/example_trust_graph.json) |
+
+The implementation is split into:
+
+- [`zkvm/core/`](zkvm/core): shared input types, validation and scoring logic.
+- [`zkvm/methods/`](zkvm/methods): one guest program per neuron. Each reads the
+  round and private input, calculates scores, and commits the output journal.
+  The build embeds each compiled guest and its Image ID into the host.
+- [`zkvm/host/`](zkvm/host): reads JSON and `.env`, calls local `r0vm` with
+  Groth16 proving enabled and development mode disabled, then decodes the
+  journal and writes the submission file.
 
 
 ## Build the prover
@@ -171,8 +194,8 @@ The binary is `zkvm/target/release/host`. It has two commands:
 `<neuron>` is `prior-voting-history`, `assigned-reputation` or `trust-graph`.
 If `--neuron` is left out, `prior-voting-history` is used, so always pass it.
 
-Print the three Image IDs. You need them in
-[step 3 of the deployment](#3-put-the-image-ids-into-the-contract):
+Print the three Image IDs to compare them with the guest IDs expected by
+the existing NQG contract:
 
 ```sh
 zkvm/target/release/host image-id --neuron prior-voting-history
@@ -183,147 +206,6 @@ zkvm/target/release/host image-id --neuron trust-graph
 Because the guests are compiled in a pinned Docker image, the same commit gives
 the same Image IDs on every machine and in every folder. Anyone can check the
 Image IDs in the contract by building that commit and running these commands.
-
-
-## Deploy the contracts
-
-> **Contracts already deployed?** Skip to [Generate a proof](#generate-a-proof).
-> You need the NQG contract id as `<CONTRACT_ID>`, the layer and neuron id of
-> each neuron (see [step 5](#5-set-up-the-layers)), and the admin key added to
-> the Stellar CLI with `stellar keys add admin --secret-key`. Build the prover
-> from the commit the contract was deployed or last upgraded from; otherwise
-> the Image IDs may differ and the contract rejects your proofs.
-
-You deploy the Groth16 verifier, then the NQG contract, and then set up its
-layers. The NQG contract also needs a Stellar Membership contract, deployed
-from its own repository.
-
-### 1. Create the accounts
-
-The **deployer** pays for the deployments. The **admin** is the only account
-that can configure the NQG contract and call `set_neuron_result`. They can be
-the same account. On testnet:
-
-```sh
-stellar keys generate deployer --network testnet
-stellar keys fund deployer --network testnet
-
-stellar keys generate admin --network testnet
-stellar keys fund admin --network testnet
-
-stellar keys address admin
-```
-
-### 2. Deploy the Groth16 verifier
-
-Skip this step if a Groth16 verifier from `stellar-risc0-verifier` already
-exists on your network and you trust that deployment. Then use its contract id
-below.
-
-Clone the verifier repository outside this repository and run the following
-inside that clone:
-
-```sh
-git clone https://github.com/NethermindEth/stellar-risc0-verifier.git
-cd stellar-risc0-verifier
-
-stellar contract build --package groth16-verifier
-
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/groth16_verifier.wasm \
-  --source-account deployer \
-  --network testnet
-```
-
-Save the printed contract id as `<VERIFIER_ID>`. Go back to this repository.
-
-The verifier accepts seals whose first 4 bytes match the selector built into
-its WASM. Proofs from `r0vm` 3.0.6 match the parameters shipped with the
-verifier.
-
-### 3. Put the Image IDs into the contract
-
-The contract has the Image IDs as constants in
-[`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs):
-
-```rust
-const PRIOR_VOTING_HISTORY_IMAGE_ID: [u8; 32] = [ ... ];
-const ASSIGNED_REPUTATION_IMAGE_ID: [u8; 32] = [ ... ];
-const TRUST_GRAPH_IMAGE_ID: [u8; 32] = [ ... ];
-```
-
-Compare all three with the output of `host image-id` from
-[Build the prover](#build-the-prover). If they differ, replace the bytes. This
-command prints an Image ID in the array format:
-
-```sh
-zkvm/target/release/host image-id --neuron prior-voting-history \
-  | sed 's/../0x&, /g'
-```
-
-A contract with a wrong Image ID deploys without error, but every
-`set_neuron_result` call for that neuron fails with `InvalidProof` (error 20).
-
-### 4. Deploy the NQG contract
-
-The NQG contract and the membership contract each store the other's address.
-Deploy the membership contract first, as described in
-[Deploying the pair](contracts/governance/README.md#deploying-the-pair), and
-save its contract id as `<MEMBERSHIP_ID>`.
-
-```sh
-stellar contract build --manifest-path contracts/Cargo.toml --package governance
-
-stellar contract deploy \
-  --wasm contracts/target/wasm32v1-none/release/governance.wasm \
-  --source-account deployer \
-  --network testnet \
-  -- \
-  --admin "<ADMIN_ADDRESS>" \
-  --current_round 33 \
-  --membership_contract "<MEMBERSHIP_ID>" \
-  --verifier "<VERIFIER_ID>"
-```
-
-`<ADMIN_ADDRESS>` is the `G...` address printed by `stellar keys address admin`.
-`--current_round` is the round you are going to score. Save the printed
-contract id as `<CONTRACT_ID>`, and point the membership contract at it with
-`set_nqg_contract` (see the link above).
-
-The admin can change all of this later: `set_current_round`,
-`set_membership_contract`, `set_verifier`, `transfer_admin`, and `upgrade` for
-new code (see [After changing a neuron](#after-changing-a-neuron)).
-
-### 5. Set up the layers
-
-The contract weighs each neuron's scores and combines them in layers. This
-sets up one layer that adds up the three neurons, each with weight 1.0:
-
-```sh
-stellar contract invoke --network testnet --source admin --id "<CONTRACT_ID>" \
-  -- add_layer \
-  --raw_neurons '[["PriorVotingHistory",1000000],["AssignedReputation",1000000],["TrustGraph",1000000]]' \
-  --layer_aggregator Sum
-```
-
-Each entry is a name and a weight with 6 decimals: `1000000` is 1.0. The name
-is only a label. Layers get the ids `0`, `1`, ... in the order they are added,
-and the neurons of a layer get the ids `0`, `1`, ... in the order they are
-listed. Here prior voting history is layer `0` neuron `0`, assigned reputation
-layer `0` neuron `1`, and trust graph layer `0` neuron `2`. You pass these ids
-when you submit. Check the setup with:
-
-```sh
-stellar contract invoke --send=no --network testnet --source admin \
-  --id "<CONTRACT_ID>" \
-  -- \
-  get_neuron --layer_id 0 --neuron_id 2
-```
-
-This returns `{"name":"TrustGraph","weight":1000000}`. The weights here are an
-example. `--layer_aggregator` is `Sum` or `Product`, and a later layer is added
-on top of the earlier ones; see
-[the contract README](contracts/governance/README.md#interface).
 
 
 ## Generate a proof
@@ -423,6 +305,18 @@ the proof.
 
 ## Submit the scores
 
+Before submitting, obtain the existing NQG contract ID, the configured layer
+and neuron IDs for the selected guest, and the contract's active round from
+the contract administrator. Build the prover from the commit matching the
+contract's guest Image IDs; otherwise it rejects the proof. The membership
+and Groth16 verifier contracts must already be connected to NQG.
+
+The Stellar CLI must have the admin identity used as `--source`, and that
+account must exist on the selected network. The script requires its
+authorization and submits a transaction that pays a fee. The `0` and `1`
+layer and neuron IDs below are examples; replace them with your configured
+IDs.
+
 ```sh
 node scripts/submit-neuron.ts \
   --neuron assigned-reputation \
@@ -437,18 +331,13 @@ node scripts/submit-neuron.ts \
 All seven flags are required and unknown flags are rejected. `--neuron` must
 match the neuron that produced the output file, as in `host prove`; with the
 wrong neuron, the verifier rejects the proof because the Image ID differs.
-`--layer-id` and `--neuron-id` choose where the contract stores the scores, as
-set up in [step 5](#5-set-up-the-layers). `--source` is the admin identity name
-in the Stellar CLI, or its secret key.
+
 
 The script:
 
 1. Reads `currentRound`, `scores`, `journal`, and `seal` from the output file.
 2. Checks that every id is a decimal `u32`.
-3. Scales every score to an integer with 6 decimal places, using exact
-   decimal arithmetic. `1.5` becomes `1500000`. Digits after the 6th are
-   dropped. Scores in exponent notation, such as `1e-7`, and scores that do
-   not fit an `i64` are rejected.
+3. Converts each score to text and scales it to an integer with 6 decimal places.
 4. Asks the contract for its active round and stops if it is not
    `currentRound`. The contract stores the scores under its active round, not
    under the round in the file.
@@ -461,7 +350,7 @@ The script:
      -- set_neuron_result \
      --layer_id 0 \
      --neuron_id 1 \
-     --result '{"0":3000000,"1":3500000}' \
+     --result '{"0":1500000,"1":2250000}' \
      --guest AssignedReputation \
      --journal <JOURNAL_HEX> \
      --seal <SEAL_HEX>
@@ -611,27 +500,9 @@ can change the Image ID, even removing a comment line, because panic messages
 in the binary can contain line numbers. A dependency update or a change to
 the pinned Docker builder can change it too.
 
-After such a change:
-
-1. Rebuild the prover and run `host image-id` for the three neurons.
-2. Update the constants in
-   [`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs).
-3. Run the contract tests, as in [The contract](#the-contract).
-4. Build the contract, upload the new WASM, and upgrade the deployed contract
-   with the hash that `upload` prints:
-
-   ```sh
-   stellar contract build --manifest-path contracts/Cargo.toml --package governance
-
-   stellar contract upload \
-     --wasm contracts/target/wasm32v1-none/release/governance.wasm \
-     --source-account admin \
-     --network testnet
-
-   stellar contract invoke --network testnet --source admin --id "<CONTRACT_ID>" \
-     -- upgrade --wasm_hash <WASM_HASH>
-   ```
-
-The contract keeps its address, its setup, and the scores, proofs and voting
-powers stored so far. Proofs stored before the upgrade keep the Image ID they
-were checked against.
+Rebuild the prover and run `host image-id` for all three neurons. Compare the
+IDs with the constants in
+[`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs).
+If an ID changes, the contract administrator must update the accepted guest
+ID before proofs from the new build can be submitted. Until then, use the
+prover built from the commit matching the existing contract.
