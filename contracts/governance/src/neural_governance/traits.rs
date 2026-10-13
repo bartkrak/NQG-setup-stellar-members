@@ -1,6 +1,7 @@
 use crate::neural_governance::{Layer, LayerAggregator, NGQ, Neuron};
 use crate::types::VotingSystemError;
-use soroban_sdk::{Env, Map, String, Vec};
+use crate::verifier::{NeuronGuest, NeuronProof};
+use soroban_sdk::{Bytes, Env, Map, String, Vec};
 
 pub trait Governance {
     /// Add a new layer to the contract.
@@ -47,15 +48,47 @@ pub trait Governance {
         neuron_id: String,
     ) -> Result<Map<u32, i64>, VotingSystemError>;
 
-    /// Set neuron result for the active round.
+    /// Get the proof stored with a neuron result for a specific round.
+    fn get_neuron_proof_round(
+        env: &Env,
+        layer_id: String,
+        neuron_id: String,
+        round: u32,
+    ) -> Result<NeuronProof, VotingSystemError>;
+
+    /// Get the proof stored with a neuron result for the active round.
+    fn get_neuron_proof(
+        env: &Env,
+        layer_id: String,
+        neuron_id: String,
+    ) -> Result<NeuronProof, VotingSystemError>;
+
+    /// Set neuron result for the active round, with the zkvm proof of the
+    /// guest that computed it.
     ///
     /// Every key must be an active member of the Stellar Membership contract:
-    /// `NotAMember` otherwise, and nothing is written.
+    /// `NotAMember` otherwise. Then the verifier contract must accept `seal`
+    /// for `guest`'s Image ID and the SHA-256 of `journal`: `InvalidProof`
+    /// otherwise. Nothing is written unless both pass; then the result and
+    /// the proof are stored, replacing any earlier upload for this neuron
+    /// and round.
+    ///
+    /// `result` is not compared with the journal: the proof shows what the
+    /// guest committed, not that `result` is it.
+    ///
+    /// # Arguments
+    ///
+    /// * `guest`: the zkvm guest that computed the result; selects the Image ID.
+    /// * `journal`: the guest's public output as committed (`journal` of `host prove`).
+    /// * `seal`: the 4-byte verifier selector and the Groth16 seal (`seal` of `host prove`).
     fn set_neuron_result(
         env: Env,
         layer_id: String,
         neuron_id: String,
         result: Map<u32, i64>,
+        guest: NeuronGuest,
+        journal: Bytes,
+        seal: Bytes,
     ) -> Result<(), VotingSystemError>;
 
     /// Get a map of member ids and their voting powers for a layer for the active round.

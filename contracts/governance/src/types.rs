@@ -28,4 +28,7 @@ pub enum VotingSystemError {
     NotAMember = 18,
     /// A weighted, aggregated or summed value does not fit an `i64`.
     ArithmeticOverflow = 19,
+    /// The verifier contract did not accept the proof of a neuron result.
+    InvalidProof = 20,
+    NeuronProofNotSet = 21,
 }

@@ -52,6 +52,15 @@ pub fn get_neuron_result_key(layer_id: &String, neuron_id: &String, round: u32) 
     DataKey::NeuronResultKey(data)
 }
 
+pub fn get_neuron_proof_key(layer_id: &String, neuron_id: &String, round: u32) -> DataKey {
+    let data = NeuronResultKeyData {
+        layer_id: layer_id.clone(),
+        neuron_id: neuron_id.clone(),
+        round,
+    };
+    DataKey::NeuronProofKey(data)
+}
+
 pub fn get_voting_powers_key(round: u32) -> DataKey {
     let data = VotingPowersKeyData { round };
     DataKey::VotingPowers(data)
@@ -101,6 +110,25 @@ mod tests {
         assert_eq!(
             key,
             DataKey::NeuronResultKey(NeuronResultKeyData {
+                layer_id,
+                neuron_id,
+                round
+            })
+        );
+    }
+
+    #[test]
+    fn constructing_neuron_proof_key() {
+        let env = Env::default();
+
+        let layer_id = String::from_str(&env, "1");
+        let neuron_id = String::from_str(&env, "2");
+        let round = 25;
+
+        let key = get_neuron_proof_key(&layer_id, &neuron_id, round);
+        assert_eq!(
+            key,
+            DataKey::NeuronProofKey(NeuronResultKeyData {
                 layer_id,
                 neuron_id,
                 round

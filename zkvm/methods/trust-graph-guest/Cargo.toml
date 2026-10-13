@@ -1,0 +1,11 @@
+[package]
+name = "trust_graph_guest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["std"] }
+trust-graph-core = { path = "../../core/trust-graph" }

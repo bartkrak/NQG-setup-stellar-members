@@ -1,4 +1,4 @@
-use crate::e2e::common::contract_utils::deploy_contract;
+use crate::e2e::common::contract_utils::{deploy_contract, upload_neuron_result};
 use soroban_sdk::{Env, Map, String};
 
 mod mock_contract {
@@ -34,7 +34,8 @@ fn storage_is_retained_after_upgrade() {
     result.set(2, 200);
     env.mock_all_auths();
 
-    contract_client.set_neuron_result(
+    upload_neuron_result(
+        &contract_client,
         &String::from_str(&env, "0"),
         &String::from_str(&env, "0"),
         &result,
