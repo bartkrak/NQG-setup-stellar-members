@@ -4,6 +4,7 @@ use risc0_zkvm::guest::env;
 fn main() {
     let current_round: u32 = env::read();
     let input: Input = env::read();
+    input.validate().expect("Invalid assigned-reputation input");
     let output: Output = calculate_result(current_round, &input);
     env::commit(&output);
 }

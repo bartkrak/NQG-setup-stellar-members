@@ -1,3 +1,4 @@
+use crate::e2e::common::contract_utils::public_key;
 use crate::e2e::common::contract_utils::{deploy_contract, upload_neuron_result};
 use soroban_sdk::{Env, Map, String};
 
@@ -30,8 +31,8 @@ fn storage_is_retained_after_upgrade() {
 
     // Store data using old impl
     let mut result = Map::new(&env);
-    result.set(1, 100);
-    result.set(2, 200);
+    result.set(public_key(&env, 1), 100);
+    result.set(public_key(&env, 2), 200);
     env.mock_all_auths();
 
     upload_neuron_result(

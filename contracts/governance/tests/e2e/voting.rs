@@ -1,3 +1,4 @@
+use crate::e2e::common::contract_utils::public_key;
 use soroban_sdk::{
     Address, Env, Map, String, Vec,
     testutils::{Address as _, MockAuth, MockAuthInvoke},
@@ -22,19 +23,19 @@ fn voting_powers_from_weighted_neurons() {
     raw_neurons.push_back((String::from_str(&env, "TrustGraph"), 1 * DECIMALS));
     contract_client.add_layer(&raw_neurons, &LayerAggregator::Sum);
 
-    let user1: u32 = 1;
-    let user2: u32 = 2;
-    let user3: u32 = 3;
+    let user1 = public_key(&env, 1);
+    let user2 = public_key(&env, 2);
+    let user3 = public_key(&env, 3);
 
     let mut neuron_result = Map::new(&env);
-    neuron_result.set(user1, 10 * DECIMALS);
-    neuron_result.set(user2, 20 * DECIMALS);
-    neuron_result.set(user3, 30 * DECIMALS);
+    neuron_result.set(user1.clone(), 10 * DECIMALS);
+    neuron_result.set(user2.clone(), 20 * DECIMALS);
+    neuron_result.set(user3.clone(), 30 * DECIMALS);
 
     let mut neuron_result2 = Map::new(&env);
-    neuron_result2.set(user1, 100 * DECIMALS);
-    neuron_result2.set(user2, 200 * DECIMALS);
-    neuron_result2.set(user3, 300 * DECIMALS);
+    neuron_result2.set(user1.clone(), 100 * DECIMALS);
+    neuron_result2.set(user2.clone(), 200 * DECIMALS);
+    neuron_result2.set(user3.clone(), 300 * DECIMALS);
 
     upload_neuron_result(
         &contract_client,
@@ -55,9 +56,9 @@ fn voting_powers_from_weighted_neurons() {
 
     // Neuron 0 weighs 2, neuron 1 weighs 1, the layer sums them
     let mut expected = Map::new(&env);
-    expected.set(user1, (10 * 2 + 100) * DECIMALS);
-    expected.set(user2, (20 * 2 + 200) * DECIMALS);
-    expected.set(user3, (30 * 2 + 300) * DECIMALS);
+    expected.set(user1.clone(), (10 * 2 + 100) * DECIMALS);
+    expected.set(user2.clone(), (20 * 2 + 200) * DECIMALS);
+    expected.set(user3.clone(), (30 * 2 + 300) * DECIMALS);
     assert_eq!(contract_client.get_voting_powers(), expected);
     assert_eq!(
         contract_client.get_voting_power_for_user(&user2),
@@ -73,13 +74,13 @@ fn calculate_voting_powers_requires_admin() {
     let (contract_client, admin) = deploy_contract(&env);
     env.mock_all_auths();
 
-    let user: u32 = 1;
+    let user = public_key(&env, 1);
     contract_client.add_layer(
         &vec![&env, (String::from_str(&env, "Dummy"), DECIMALS)],
         &LayerAggregator::Sum,
     );
     let mut neuron_result = Map::new(&env);
-    neuron_result.set(user, 100 * DECIMALS);
+    neuron_result.set(user.clone(), 100 * DECIMALS);
     upload_neuron_result(
         &contract_client,
         &String::from_str(&env, "0"),
@@ -149,8 +150,8 @@ fn set_bump_round_flow() {
 
     contract_client.set_current_round(&25);
 
-    let user1: u32 = 1;
-    let user2: u32 = 2;
+    let user1 = public_key(&env, 1);
+    let user2 = public_key(&env, 2);
     let neuron0 = String::from_str(&env, "0");
     let layer0 = String::from_str(&env, "0");
 
@@ -162,8 +163,8 @@ fn set_bump_round_flow() {
 
     // Set results for round 25
     let mut result25 = Map::new(&env);
-    result25.set(user1, 100);
-    result25.set(user2, 200);
+    result25.set(user1.clone(), 100);
+    result25.set(user2.clone(), 200);
     upload_neuron_result(&contract_client, &layer0, &neuron0, &result25);
 
     // Verify results are set
@@ -195,8 +196,8 @@ fn set_bump_round_flow() {
 
     // Set results for round 26
     let mut result26 = Map::new(&env);
-    result26.set(user1, 5000);
-    result26.set(user2, 6000);
+    result26.set(user1.clone(), 5000);
+    result26.set(user2.clone(), 6000);
     upload_neuron_result(&contract_client, &layer0, &neuron0, &result26);
 
     // Verify results are set
@@ -224,8 +225,8 @@ fn get_voting_power_for_user() {
 
     contract_client.set_current_round(&25);
 
-    let user1: u32 = 1;
-    let user2: u32 = 2;
+    let user1 = public_key(&env, 1);
+    let user2 = public_key(&env, 2);
     let neuron0 = String::from_str(&env, "0");
     let neuron1 = String::from_str(&env, "1");
     let layer0 = String::from_str(&env, "0");
@@ -241,13 +242,13 @@ fn get_voting_power_for_user() {
     );
 
     let mut result0 = Map::new(&env);
-    result0.set(user1, 100);
-    result0.set(user2, 200);
+    result0.set(user1.clone(), 100);
+    result0.set(user2.clone(), 200);
     upload_neuron_result(&contract_client, &layer0, &neuron0, &result0);
 
     let mut result1 = Map::new(&env);
-    result1.set(user1, 222);
-    result1.set(user2, 333);
+    result1.set(user1.clone(), 222);
+    result1.set(user2.clone(), 333);
     upload_neuron_result(&contract_client, &layer0, &neuron1, &result1);
 
     // Verify results are set
@@ -266,7 +267,7 @@ fn get_voting_power_for_user() {
     // Verify error is returned for invalid user
     assert_eq!(
         contract_client
-            .try_get_voting_power_for_user(&99)
+            .try_get_voting_power_for_user(&public_key(&env, 99))
             .unwrap_err()
             .unwrap(),
         VotingSystemError::NGQResultForVoterMissing
@@ -283,9 +284,9 @@ fn calculate_voting_powers_clamps_negative_nqg_to_zero() {
 
     contract_client.set_current_round(&25);
 
-    let user_negative: u32 = 1;
-    let user_positive: u32 = 2;
-    let user_recovers: u32 = 3;
+    let user_negative = public_key(&env, 1);
+    let user_positive = public_key(&env, 2);
+    let user_recovers = public_key(&env, 3);
     let neuron0 = String::from_str(&env, "0");
     let layer0 = String::from_str(&env, "0");
     let layer1 = String::from_str(&env, "1");
@@ -300,15 +301,15 @@ fn calculate_voting_powers_clamps_negative_nqg_to_zero() {
     );
 
     let mut layer0_result = Map::new(&env);
-    layer0_result.set(user_negative, 100);
-    layer0_result.set(user_positive, 200);
-    layer0_result.set(user_recovers, -100);
+    layer0_result.set(user_negative.clone(), 100);
+    layer0_result.set(user_positive.clone(), 200);
+    layer0_result.set(user_recovers.clone(), -100);
     upload_neuron_result(&contract_client, &layer0, &neuron0, &layer0_result);
 
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_negative, -500);
-    layer1_result.set(user_positive, 300);
-    layer1_result.set(user_recovers, 300);
+    layer1_result.set(user_negative.clone(), -500);
+    layer1_result.set(user_positive.clone(), 300);
+    layer1_result.set(user_recovers.clone(), 300);
     upload_neuron_result(&contract_client, &layer1, &neuron0, &layer1_result);
 
     contract_client.calculate_voting_powers();
@@ -334,8 +335,8 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
 
     contract_client.set_current_round(&25);
 
-    let user_negative: u32 = 1;
-    let user_positive: u32 = 2;
+    let user_negative = public_key(&env, 1);
+    let user_positive = public_key(&env, 2);
     let neuron0 = String::from_str(&env, "0");
     let layer0 = String::from_str(&env, "0");
     let layer1 = String::from_str(&env, "1");
@@ -350,13 +351,13 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
     );
 
     let mut layer0_result = Map::new(&env);
-    layer0_result.set(user_negative, -100);
-    layer0_result.set(user_positive, 200);
+    layer0_result.set(user_negative.clone(), -100);
+    layer0_result.set(user_positive.clone(), 200);
     upload_neuron_result(&contract_client, &layer0, &neuron0, &layer0_result);
 
     // user_negative is absent from the last layer, so its -100 would never be clamped
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_positive, 300);
+    layer1_result.set(user_positive.clone(), 300);
     upload_neuron_result(&contract_client, &layer1, &neuron0, &layer1_result);
 
     assert_eq!(
@@ -369,8 +370,8 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
 
     // Same user count per layer but different users must be rejected too
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_positive, 300);
-    layer1_result.set(3, 300);
+    layer1_result.set(user_positive.clone(), 300);
+    layer1_result.set(public_key(&env, 3), 300);
     upload_neuron_result(&contract_client, &layer1, &neuron0, &layer1_result);
 
     assert_eq!(
@@ -383,8 +384,8 @@ fn calculate_voting_powers_rejects_layers_with_mismatched_users() {
 
     // With user sets aligned the calculation succeeds and the clamp applies
     let mut layer1_result = Map::new(&env);
-    layer1_result.set(user_negative, 50);
-    layer1_result.set(user_positive, 300);
+    layer1_result.set(user_negative.clone(), 50);
+    layer1_result.set(user_positive.clone(), 300);
     upload_neuron_result(&contract_client, &layer1, &neuron0, &layer1_result);
 
     contract_client.calculate_voting_powers();
@@ -413,7 +414,7 @@ fn calculate_voting_powers_rejects_overflow() {
 
     // The largest i64 weighted by 2.0 does not fit
     let mut neuron_result = Map::new(&env);
-    neuron_result.set(1, i64::MAX);
+    neuron_result.set(public_key(&env, 1), i64::MAX);
     upload_neuron_result(&contract_client, &layer0, &neuron0, &neuron_result);
 
     assert_eq!(

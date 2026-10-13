@@ -1,3 +1,4 @@
+use crate::e2e::common::contract_utils::public_key;
 use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
 use soroban_sdk::{Address, Bytes, BytesN, Env, IntoVal, Map, String, vec};
 
@@ -5,16 +6,15 @@ use governance::types::VotingSystemError;
 use governance::{NeuronGuest, NeuronProof, VotingSystem, VotingSystemClient};
 
 use crate::e2e::common::contract_utils::deploy_contract;
-use crate::e2e::common::membership::MockMembership;
 use crate::e2e::common::verifier::{MockVerifier, MockVerifierClient};
 
 fn digest(env: &Env, journal: &Bytes) -> BytesN<32> {
     env.crypto().sha256(journal).into()
 }
 
-fn scores(env: &Env, member_id: u32, score: i64) -> Map<u32, i64> {
+fn scores(env: &Env, key_index: u8, score: i64) -> Map<Address, i64> {
     let mut result = Map::new(env);
-    result.set(member_id, score);
+    result.set(public_key(env, key_index), score);
     result
 }
 
@@ -27,9 +27,8 @@ fn verifier<'a>(env: &Env, contract_client: &VotingSystemClient) -> MockVerifier
 fn verifier_is_set_by_constructor() {
     let env = Env::default();
     let admin = Address::generate(&env);
-    let membership = env.register(MockMembership, ());
     let verifier = env.register(MockVerifier, ());
-    let contract_id = env.register(VotingSystem, (admin, 25u32, membership, verifier.clone()));
+    let contract_id = env.register(VotingSystem, (admin, 25u32, verifier.clone()));
     let contract_client = VotingSystemClient::new(&env, &contract_id);
 
     assert_eq!(contract_client.get_verifier(), verifier);
@@ -243,29 +242,6 @@ fn verifier_that_cannot_answer_rejects_the_upload() {
             .unwrap(),
         VotingSystemError::NeuronResultNotSet
     );
-}
-
-#[test]
-fn members_are_checked_before_the_proof() {
-    let env = Env::default();
-    let (contract_client, _admin) = deploy_contract(&env);
-    env.mock_all_auths();
-
-    assert_eq!(
-        contract_client
-            .try_set_neuron_result(
-                &String::from_str(&env, "0"),
-                &String::from_str(&env, "0"),
-                &scores(&env, 42, 100),
-                &NeuronGuest::PriorVotingHistory,
-                &Bytes::from_slice(&env, b"scores"),
-                &Bytes::from_slice(&env, &[9])
-            )
-            .unwrap_err()
-            .unwrap(),
-        VotingSystemError::NotAMember
-    );
-    assert_eq!(verifier(&env, &contract_client).seen(), None);
 }
 
 #[test]

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { StrKey } from "@stellar/stellar-sdk";
 
 type Output = {
   currentRound: string;
@@ -84,7 +85,7 @@ function readOutput(json: string): Output {
 
   return {
     currentRound: String(data.currentRound),
-    scores: Object.entries(data.scores).map(([id, score]): [string, string] => [id, String(score)]),
+    scores: Object.entries(data.scores).map(([publicKey, score]): [string, string] => [publicKey, String(score)]),
     journal: data.journal,
     seal: data.seal,
   };
@@ -96,11 +97,11 @@ function readOutput(json: string): Output {
  * digits above 2^53.
  */
 function scaledScoresJson(entries: Array<[string, string]>): string {
-  const fields = entries.map(([id, score]) => {
-    if (!/^(0|[1-9]\d*)$/.test(id) || BigInt(id) > 0xffff_ffffn) {
-      throw new Error(`membership token ${id} must be a u32`);
+  const fields = entries.map(([publicKey, score]) => {
+    if (!StrKey.isValidEd25519PublicKey(publicKey)) {
+      throw new Error(`invalid Stellar public key ${publicKey}`);
     }
-    return `${JSON.stringify(id)}:${scaleToI64(score)}`;
+    return `${JSON.stringify(publicKey)}:${scaleToI64(score)}`;
   });
   return `{${fields.join(",")}}`;
 }

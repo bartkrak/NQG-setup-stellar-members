@@ -1,12 +1,12 @@
 {
   "users": [
     {
-      "id": "0",
+      "public_key": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
       "tier": 3,
       "discord_roles": []
     },
     {
-      "id": "1",
+      "public_key": "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H",
       "tier": 2,
       "discord_roles": [
         "SDF",

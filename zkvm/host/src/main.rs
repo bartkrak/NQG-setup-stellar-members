@@ -69,6 +69,7 @@ impl Neuron {
             }
             Neuron::AssignedReputation => {
                 let input: assigned_reputation_core::Input = files::read_json(input)?;
+                input.validate()?;
                 proof::prove(
                     current_round,
                     &input,

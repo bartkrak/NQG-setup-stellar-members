@@ -60,7 +60,7 @@ pub(crate) fn read_neuron_result(
     layer_id: &String,
     neuron_id: &String,
     round: u32,
-) -> ContractResult<Map<u32, i64>> {
+) -> ContractResult<Map<Address, i64>> {
     let key = get_neuron_result_key(layer_id, neuron_id, round);
     env.storage()
         .temporary()
@@ -73,7 +73,7 @@ pub(crate) fn write_neuron_result(
     layer_id: &String,
     neuron_id: &String,
     round: u32,
-    result: &Map<u32, i64>,
+    result: &Map<Address, i64>,
 ) {
     let key = get_neuron_result_key(layer_id, neuron_id, round);
     env.storage().temporary().set(&key, result);
@@ -117,20 +117,6 @@ pub(crate) fn write_neural_governance(env: &Env, neural_governance: NGQ) {
 }
 
 /// Set by the constructor, so always present.
-pub(crate) fn read_membership_contract(env: &Env) -> Address {
-    env.storage()
-        .instance()
-        .get(&DataKey::MembershipContract)
-        .unwrap()
-}
-
-pub(crate) fn write_membership_contract(env: &Env, membership_contract: &Address) {
-    env.storage()
-        .instance()
-        .set(&DataKey::MembershipContract, membership_contract);
-}
-
-/// Set by the constructor, so always present.
 pub(crate) fn read_verifier(env: &Env) -> Address {
     env.storage().instance().get(&DataKey::Verifier).unwrap()
 }
@@ -139,7 +125,7 @@ pub(crate) fn write_verifier(env: &Env, verifier: &Address) {
     env.storage().instance().set(&DataKey::Verifier, verifier);
 }
 
-pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<u32, i64>> {
+pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<Address, i64>> {
     let key = get_voting_powers_key(round);
     env.storage()
         .persistent()
@@ -147,7 +133,7 @@ pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<u3
         .ok_or(VotingSystemError::VotingPowersNotSet)
 }
 
-pub(crate) fn write_voting_powers(env: &Env, round: u32, voting_powers: &Map<u32, i64>) {
+pub(crate) fn write_voting_powers(env: &Env, round: u32, voting_powers: &Map<Address, i64>) {
     let key = get_voting_powers_key(round);
     env.storage().persistent().set(&key, voting_powers);
 }

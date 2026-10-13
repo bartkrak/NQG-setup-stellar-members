@@ -24,15 +24,15 @@ pub fn validate_current_round(current_round: u32) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_user_id(user: &str) -> Result<()> {
+pub(crate) fn validate_public_key(user: &str) -> Result<()> {
     ensure!(
-        !user.is_empty() && user.bytes().all(|byte| byte.is_ascii_digit()),
-        "User ID must be a nonempty string of ASCII digits: {user}"
+        stellar_strkey::ed25519::PublicKey::from_string(user).is_ok(),
+        "Invalid Stellar public key: {user}"
     );
     Ok(())
 }
 
-/// File-independent input shared by the CLI and zkVM guest. User IDs are decimal strings.
+/// File-independent input shared by the CLI and zkVM guest. Users are identified by Stellar public keys.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PriorVotingHistoryInput {
@@ -52,14 +52,14 @@ impl PriorVotingHistoryInput {
 
     pub fn validate(&self) -> Result<()> {
         for user in &self.users {
-            validate_user_id(user)?;
+            validate_public_key(user)?;
         }
         ensure!(
             self.users.iter().collect::<HashSet<_>>().len() == self.users.len(),
             "Users must not contain duplicates"
         );
         for (user, rounds) in &self.users_round_history {
-            validate_user_id(user)?;
+            validate_public_key(user)?;
             ensure!(
                 rounds.iter().collect::<HashSet<_>>().len() == rounds.len(),
                 "Duplicate rounds in usersRoundHistory for {user}"
@@ -67,7 +67,7 @@ impl PriorVotingHistoryInput {
         }
         for (round, users) in &self.submitters_per_round {
             for user in users {
-                validate_user_id(user)?;
+                validate_public_key(user)?;
             }
             ensure!(
                 users.iter().collect::<HashSet<_>>().len() == users.len(),
@@ -77,7 +77,7 @@ impl PriorVotingHistoryInput {
         for (round, submissions) in &self.votes_per_round {
             for votes in submissions.values() {
                 for user in votes.keys() {
-                    validate_user_id(user)?;
+                    validate_public_key(user)?;
                 }
             }
             ensure!(
@@ -214,4 +214,116 @@ fn calculate_active_votes_ratio(
         .filter(|submission| matches!(submission.get(user), Some(Vote::Yes | Vote::No)))
         .count();
     (active_votes_count as f64 / votes.len() as f64).max(min_ratio)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn example() -> PriorVotingHistoryInput {
+        PriorVotingHistoryInput::from_json(include_str!(
+            "../../../data/example_prior_voting_history.json"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn public_keys_preserve_history_votes_and_submitter_scores() {
+        let data = example();
+        let legacy_users: Vec<String> = (0..data.users.len()).map(|i| i.to_string()).collect();
+        let ids: HashMap<_, _> = data.users.iter().zip(&legacy_users).collect();
+        let history = data
+            .users_round_history
+            .iter()
+            .map(|(key, rounds)| (ids[key].clone(), rounds.clone()))
+            .collect();
+        let votes = data
+            .votes_per_round
+            .iter()
+            .map(|(round, submissions)| {
+                (
+                    *round,
+                    submissions
+                        .iter()
+                        .map(|(submission, votes)| {
+                            (
+                                submission.clone(),
+                                votes
+                                    .iter()
+                                    .map(|(key, vote)| (ids[key].clone(), vote.clone()))
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        let submitters = data
+            .submitters_per_round
+            .iter()
+            .map(|(round, keys)| (*round, keys.iter().map(|key| ids[key].clone()).collect()))
+            .collect();
+        let expected = PriorVotingHistoryNeuron::from_data(history, votes, submitters, 33)
+            .calculate_result(&legacy_users);
+        let output = data.clone().calculate(33).unwrap();
+        for (key, id) in data.users.iter().zip(&legacy_users) {
+            assert_eq!(output[key], expected[id]);
+        }
+        assert!(output[&data.users[2]] > 0.0);
+        assert_eq!(output[&data.users[3]], 0.0);
+    }
+
+    #[test]
+    fn invalid_public_keys_are_rejected_everywhere() {
+        for invalid in [
+            "",
+            "0",
+            "not-a-key",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ] {
+            let mut data = example();
+            data.users.push(invalid.into());
+            assert!(data.validate().is_err());
+            let mut data = example();
+            data.users_round_history.insert(invalid.into(), vec![32]);
+            assert!(data.validate().is_err());
+            let mut data = example();
+            data.submitters_per_round
+                .get_mut(&33)
+                .unwrap()
+                .push(invalid.into());
+            assert!(data.validate().is_err());
+            let mut data = example();
+            data.votes_per_round
+                .get_mut(&32)
+                .unwrap()
+                .get_mut("project-a")
+                .unwrap()
+                .insert(invalid.into(), Vote::Yes);
+            assert!(data.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn duplicate_public_keys_and_existing_round_rules_are_preserved() {
+        let mut data = example();
+        data.users.push(data.users[0].clone());
+        assert!(data.validate().is_err());
+        let mut data = example();
+        data.submitters_per_round
+            .get_mut(&33)
+            .unwrap()
+            .push(data.users[2].clone());
+        assert!(data.validate().is_err());
+        let mut data = example();
+        data.users_round_history
+            .get_mut(&data.users[0])
+            .unwrap()
+            .push(32);
+        assert!(data.validate().is_err());
+        let mut data = example();
+        data.votes_per_round.insert(34, HashMap::new());
+        assert!(data.validate().is_err());
+        assert!(example().calculate(7).is_err());
+    }
 }

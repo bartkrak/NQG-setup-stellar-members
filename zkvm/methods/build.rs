@@ -16,7 +16,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../core/trust-graph/src");
     println!("cargo:rerun-if-changed=../core/trust-graph/Cargo.toml");
     println!("cargo:rerun-if-env-changed=RISC0_DOCKER_CONTAINER_TAG");
-    
+
     let manifest_dir = PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must set CARGO_MANIFEST_DIR"),
     );

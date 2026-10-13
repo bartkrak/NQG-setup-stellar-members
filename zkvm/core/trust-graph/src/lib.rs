@@ -16,13 +16,13 @@ const HIGHLY_TRUSTED_PERCENT_BONUS: f64 = 15.0;
 // users that have their own trust list filled get a bonus of X % of their own score
 const FILLED_TRUST_LIST_PERCENT_BONUS: f64 = 10.0;
 
-/// Trust lists of the round being scored. User IDs are decimal strings.
+/// Trust lists of the round being scored. Users are identified by Stellar public keys.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Input {
     /// Users that get a score.
     pub users: Vec<String>,
-    /// User -> users they trust. IDs outside `users` are allowed: they are part
+    /// Public key -> public keys they trust. Keys outside `users` are allowed: they are part
     /// of the graph but get no score.
     pub trusted_for_user: HashMap<String, Vec<String>>,
 }
@@ -30,16 +30,16 @@ pub struct Input {
 impl Input {
     pub fn validate(&self) -> Result<()> {
         for user in &self.users {
-            validate_user_id(user)?;
+            validate_public_key(user)?;
         }
         ensure!(
             self.users.iter().collect::<HashSet<_>>().len() == self.users.len(),
             "Users must not contain duplicates"
         );
         for (user, trusted) in &self.trusted_for_user {
-            validate_user_id(user)?;
+            validate_public_key(user)?;
             for other in trusted {
-                validate_user_id(other)?;
+                validate_public_key(other)?;
                 ensure!(other != user, "User {user} must not trust themselves");
             }
         }
@@ -47,10 +47,10 @@ impl Input {
     }
 }
 
-fn validate_user_id(user: &str) -> Result<()> {
+fn validate_public_key(user: &str) -> Result<()> {
     ensure!(
-        !user.is_empty() && user.bytes().all(|byte| byte.is_ascii_digit()),
-        "User ID must be a nonempty string of ASCII digits: {user}"
+        stellar_strkey::ed25519::PublicKey::from_string(user).is_ok(),
+        "Invalid Stellar public key: {user}"
     );
     Ok(())
 }
@@ -404,28 +404,38 @@ mod tests {
         }
     }
 
+    fn public_key(index: u8) -> String {
+        stellar_strkey::ed25519::PublicKey([index; 32]).to_string()
+    }
+
     #[test]
-    fn calculate_scores_only_users_and_keeps_round() {
-        // "9" is outside `users`: it shapes the graph but gets no score.
+    fn calculate_scores_only_public_keys_and_keeps_round() {
+        let keys: Vec<String> = (0..=9).map(public_key).collect();
         let output = calculate(
             33,
             input(
-                &["0", "1", "2"],
-                &[("0", &["1", "9"]), ("1", &["0"]), ("9", &["1"])],
+                &[&keys[0], &keys[1], &keys[2]],
+                &[
+                    (&keys[0], &[&keys[1], &keys[9]]),
+                    (&keys[1], &[&keys[0]]),
+                    (&keys[9], &[&keys[1]]),
+                ],
             ),
         )
         .unwrap();
         assert_eq!(output.current_round, 33);
         assert_eq!(
             output.scores.keys().collect::<Vec<_>>(),
-            vec!["0", "1", "2"]
+            vec![&keys[0], &keys[1], &keys[2]]
         );
-        assert_f64_near!(output.scores["2"], 0.0);
+        assert_f64_near!(output.scores[&keys[2]], 0.0);
     }
 
     #[test]
     fn rejects_self_trust() {
-        let err = calculate(33, input(&["0", "1"], &[("1", &["0", "1"])])).unwrap_err();
+        let a = public_key(0);
+        let b = public_key(1);
+        let err = calculate(33, input(&[&a, &b], &[(&b, &[&a, &b])])).unwrap_err();
         assert!(
             err.to_string().contains("must not trust themselves"),
             "{err}"
@@ -433,25 +443,51 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_users_and_non_numeric_ids() {
-        assert!(input(&["0", "0"], &[("0", &["1"])]).validate().is_err());
-        assert!(input(&["0", "a"], &[("0", &["1"])]).validate().is_err());
-        assert!(input(&["0"], &[("0", &["b"])]).validate().is_err());
-        assert!(input(&["0"], &[("", &["0"])]).validate().is_err());
+    fn rejects_duplicate_public_keys_and_invalid_keys() {
+        let a = public_key(0);
+        let b = public_key(1);
+        assert!(input(&[&a, &a], &[(&a, &[&b])]).validate().is_err());
+        for invalid in [
+            "",
+            "0",
+            "not-a-key",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ] {
+            assert!(input(&[&a, invalid], &[(&a, &[&b])]).validate().is_err());
+            assert!(input(&[&a], &[(&a, &[invalid])]).validate().is_err());
+            assert!(input(&[&a], &[(invalid, &[&a])]).validate().is_err());
+        }
+    }
+
+    #[test]
+    fn public_keys_preserve_scores() {
+        let data: Input =
+            serde_json::from_str(include_str!("../../../data/example_trust_graph.json")).unwrap();
+        let legacy_users: Vec<String> = (0..data.users.len()).map(|i| i.to_string()).collect();
+        let ids: HashMap<_, _> = data.users.iter().zip(&legacy_users).collect();
+        let legacy_trust = data
+            .trusted_for_user
+            .iter()
+            .map(|(user, trusted)| {
+                (
+                    ids[user].clone(),
+                    trusted.iter().map(|key| ids[key].clone()).collect(),
+                )
+            })
+            .collect();
+        let expected = TrustGraphNeuron::from_data(legacy_trust).calculate_result(&legacy_users);
+        let output = calculate(33, data.clone()).unwrap();
+        for (key, id) in data.users.iter().zip(&legacy_users) {
+            assert_f64_near!(output.scores[key], expected[id]);
+        }
     }
 
     #[test]
     fn example_inputs_are_valid() {
-        for (json, users) in [
-            (
-                include_str!("../../../data/example_trust_graph.json"),
-                40,
-            ),
-        ] {
-            let input: Input = serde_json::from_str(json).unwrap();
-            let output = calculate(33, input).unwrap();
-            assert_eq!(output.scores.len(), users);
-            assert!(output.scores.values().all(|score| score.is_finite()));
-        }
+        let input: Input =
+            serde_json::from_str(include_str!("../../../data/example_trust_graph.json")).unwrap();
+        let output = calculate(33, input).unwrap();
+        assert_eq!(output.scores.len(), 40);
+        assert!(output.scores.values().all(|score| score.is_finite()));
     }
 }

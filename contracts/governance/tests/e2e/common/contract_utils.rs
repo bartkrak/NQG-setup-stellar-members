@@ -1,27 +1,14 @@
 use governance::{NeuronGuest, VotingSystem, VotingSystemClient};
 use soroban_sdk::testutils::Address as AddressTrait;
-use soroban_sdk::{Address, Env, Map, String};
+use soroban_sdk::{Address, Env, Map, String, TryFromVal};
 
-use crate::e2e::common::membership::{MockMembership, MockMembershipClient};
 use crate::e2e::common::verifier::{MockVerifier, proof};
 
-/// Members minted on the membership mock before the governance contract is
-/// deployed, as token ids 0 to `MEMBERS - 1`. Tests upload data for ids in
-/// that range unless they mean to be rejected.
-pub const MEMBERS: u32 = 4;
-
-/// Deploy the governance contract for round 25, with a fresh membership mock
-/// holding `MEMBERS` members as its Stellar Membership contract and a fresh
-/// verifier mock that accepts every proof.
+/// Deploy governance for round 25 with a verifier mock accepting every proof.
 pub fn deploy_contract(env: &Env) -> (VotingSystemClient<'_>, Address) {
     let admin = Address::generate(env);
-    let membership = env.register(MockMembership, ());
-    let members = MockMembershipClient::new(env, &membership);
-    for _ in 0..MEMBERS {
-        members.mint(&Address::generate(env));
-    }
     let verifier = env.register(MockVerifier, ());
-    let contract_id = env.register(VotingSystem, (admin.clone(), 25u32, membership, verifier));
+    let contract_id = env.register(VotingSystem, (admin.clone(), 25u32, verifier));
     let contract_client = VotingSystemClient::new(env, &contract_id);
 
     (contract_client, admin)
@@ -33,7 +20,7 @@ pub fn upload_neuron_result(
     contract_client: &VotingSystemClient,
     layer_id: &String,
     neuron_id: &String,
-    result: &Map<u32, i64>,
+    result: &Map<Address, i64>,
 ) {
     let (journal, seal) = proof(&contract_client.env);
     contract_client.set_neuron_result(
@@ -44,4 +31,16 @@ pub fn upload_neuron_result(
         &journal,
         &seal,
     );
+}
+
+/// Deterministic Stellar account address, with no membership registration.
+pub fn public_key(env: &Env, index: u8) -> Address {
+    use soroban_sdk::xdr::{AccountId, PublicKey, ScAddress, Uint256};
+    Address::try_from_val(
+        env,
+        &ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(
+            [index; 32],
+        )))),
+    )
+    .unwrap()
 }

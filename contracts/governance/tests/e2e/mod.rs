@@ -5,9 +5,9 @@ pub(crate) mod common;
 #[cfg(feature = "testutils")]
 mod governance;
 #[cfg(feature = "testutils")]
-mod membership;
-#[cfg(feature = "testutils")]
 mod proof;
+#[cfg(feature = "testutils")]
+mod public_keys;
 #[cfg(feature = "testutils")]
 mod upgrade;
 #[cfg(feature = "testutils")]
