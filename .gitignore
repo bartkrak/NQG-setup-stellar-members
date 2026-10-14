@@ -5,3 +5,5 @@ target
 **/test_snapshots/**
 .env
 prove.txt
+runs
+scripts/flow.config.json

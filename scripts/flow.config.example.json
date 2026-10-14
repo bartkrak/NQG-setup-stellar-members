@@ -1,0 +1,11 @@
+{
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "governance": "<NQG governance contract id>",
+  "source": "<stellar keys name of the governance admin>",
+  "neurons": {
+    "prior-voting-history": { "layerId": "0", "neuronId": "0" },
+    "assigned-reputation": { "layerId": "0", "neuronId": "1" },
+    "trust-graph": { "layerId": "0", "neuronId": "2" }
+  }
+}
