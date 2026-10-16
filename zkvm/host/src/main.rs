@@ -13,7 +13,11 @@ use std::{path::Path, time::Instant};
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Prove { input, output } => prove(cli.neuron, &input, &output),
+        Command::Prove {
+            input,
+            output,
+            round,
+        } => prove(cli.neuron, &input, &output, round),
         Command::ImageId => {
             println!("{}", cli.neuron.image_id());
             Ok(())
@@ -36,8 +40,11 @@ fn current_round() -> Result<u32> {
     bail!("CURRENT_ROUND is not set in the .env file")
 }
 
-fn prove(neuron: Neuron, input: &Path, output: &Path) -> Result<()> {
-    let current_round = current_round()?;
+fn prove(neuron: Neuron, input: &Path, output: &Path, round: Option<u32>) -> Result<()> {
+    let current_round = match round {
+        Some(round) => round,
+        None => current_round()?,
+    };
     let start = Instant::now();
     let proven = neuron.prove(current_round, input)?;
     let proof = seal::on_chain_proof(&proven)?;
