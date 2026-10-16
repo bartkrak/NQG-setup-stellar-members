@@ -11,18 +11,27 @@ export type Target = {
   network: string[];
 };
 
-/** Run the stellar CLI and return its stdout. Its stderr is shown as is. */
+export function isContractError(error: unknown, code: number): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const lines = message.split("\n");
+  const errorLine = lines.find(line => line.includes("error:")) ?? lines[0];
+  return errorLine.includes(`Error(Contract, #${code})`);
+}
+
+/** Run the Stellar CLI, returning stdout or throwing its error message. */
 export function stellar(args: string[]): string {
   const result = spawnSync("stellar", args, {
-    stdio: ["ignore", "pipe", "inherit"],
+    stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
+    timeout: 60_000,
+    maxBuffer: 16 * 1024 * 1024,
   });
   if (result.error) {
     const notFound = (result.error as NodeJS.ErrnoException).code === "ENOENT";
     throw notFound ? new Error("stellar CLI not found") : result.error;
   }
   if (result.status !== 0) {
-    throw new Error(`stellar failed: ${result.signal ?? `exit code ${result.status}`}`);
+    throw new Error(result.stderr.trim() || `stellar failed: ${result.signal ?? `exit code ${result.status}`}`);
   }
   return result.stdout.trim();
 }

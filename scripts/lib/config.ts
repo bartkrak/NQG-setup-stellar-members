@@ -4,6 +4,12 @@ import type { Slot } from "./governance.ts";
 import { NEURONS, type Neuron } from "./neurons.ts";
 import type { Target } from "./stellar.ts";
 
+export type VotingHistoryConfig = {
+  tansuContract: string;
+  parentProjectKey: string;
+  explorerUrl: string;
+};
+
 /** `scripts/flow.config.json`, see `flow.config.example.json`. */
 export type FlowConfig = {
   rpcUrl: string;
@@ -12,6 +18,7 @@ export type FlowConfig = {
   governance: string;
   /** stellar CLI identity of the governance admin. */
   source: string;
+  votingHistory: VotingHistoryConfig;
   /** Where each neuron's scores go in the governance contract. */
   neurons: Record<Neuron, Slot>;
 };
@@ -31,6 +38,11 @@ export function loadConfig(path = DEFAULT_CONFIG): FlowConfig {
   const fail = (message: string) => new Error(`config ${path}: ${message}`);
   for (const field of ["rpcUrl", "networkPassphrase", "governance", "source"]) {
     if (typeof data?.[field] !== "string" || !data[field]) throw fail(`${field} must be set`);
+  }
+  for (const field of ["tansuContract", "parentProjectKey", "explorerUrl"]) {
+    if (typeof data.votingHistory?.[field] !== "string" || !data.votingHistory[field]) {
+      throw fail(`votingHistory.${field} must be set`);
+    }
   }
   for (const neuron of NEURONS) {
     const slot = data.neurons?.[neuron];

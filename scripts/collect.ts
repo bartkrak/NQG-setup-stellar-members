@@ -2,26 +2,24 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { Address, rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
-import { loadConfig, target, type FlowConfig } from "./lib/config.ts";
+import { loadConfig, target } from "./lib/config.ts";
+import { readMembers, type Member } from "./lib/member.ts";
 import { read } from "./lib/stellar.ts";
-import { runPaths, writeJson, type Member, type Snapshot } from "./lib/run.ts";
+import { runPaths, writeJson, type Snapshot } from "./lib/run.ts";
+import { readVotingHistory, type VotingHistory } from "./lib/voting-history.ts";
 
 const USAGE = `Usage:
   node scripts/collect.ts [--config <flow.config.json>] [--out <run dir>]
 
-Reads the active members from the membership contract the governance contract
-uses, merges the mocked data from scripts/mocks/, and writes a run folder with
-the input of every neuron. Prints the run folder.`;
+Reads active members and project voting history, adds the mocked Discord
+roles and trust graph from scripts/mocks/, and writes a run folder with the
+input of every neuron. Prints the run folder.`;
 
 const MOCKS = fileURLToPath(new URL("mocks/", import.meta.url));
 const RUNS = fileURLToPath(new URL("../runs/", import.meta.url));
 
-/** Most ledger keys one `getLedgerEntries` request takes. */
-const LEDGER_KEYS_PER_REQUEST = 200;
 /** Prior voting history refuses lower rounds (`validate_current_round`). */
 const MIN_ROUND = 8;
-const VOTES = new Set(["Yes", "No", "Delegate", "Abstain"]);
 
 /** Mocked data, keyed by membership token id. */
 type Mocks = {
@@ -29,12 +27,6 @@ type Mocks = {
   discordRoles: Record<string, string[]>;
   /** id -> ids it trusts (`scripts/mocks/trust-graph.json`). */
   trustedForUser: Record<string, string[]>;
-  /** The prior voting history input minus `users` (`scripts/mocks/prior-voting-history.json`). */
-  votingHistory: {
-    usersRoundHistory: Record<string, number[]>;
-    votesPerRound: Record<string, Record<string, Record<string, string>>>;
-    submittersPerRound: Record<string, string[]>;
-  };
 };
 
 function parseFlags() {
@@ -46,62 +38,6 @@ function parseFlags() {
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : error}\n${USAGE}`);
   }
-}
-
-function memberKey(membership: string, tokenId: number): xdr.LedgerKey {
-  return xdr.LedgerKey.contractData(new xdr.LedgerKeyContractData({
-    contract: new Address(membership).toScAddress(),
-    key: xdr.ScVal.scvVec([
-      xdr.ScVal.scvSymbol("Member"),
-      xdr.ScVal.scvU32(tokenId),
-    ]),
-    durability: xdr.ContractDataDurability.persistent,
-  }));
-}
-
-/**
- * Every minted token, read straight from the membership contract's storage
- * (`MemberKey::Member(token_id)`), up to 200 per request.
- */
-async function readMembers(
-  config: FlowConfig,
-  membership: string,
-): Promise<{ members: Member[]; ledger: number }> {
-  const count = Number(read(target(config, membership), "next_token_id"));
-  const server = new rpc.Server(config.rpcUrl, {
-    timeout: 30_000,
-    // A local network serves plain HTTP.
-    allowHttp: config.rpcUrl.startsWith("http://"),
-  });
-  const found = new Map<number, Member>();
-  let ledger = 0;
-  console.error(`Reading ${count} members of ${membership}...`);
-  for (let start = 0; start < count; start += LEDGER_KEYS_PER_REQUEST) {
-    const keys: xdr.LedgerKey[] = [];
-    for (let id = start; id < Math.min(count, start + LEDGER_KEYS_PER_REQUEST); id++) {
-      keys.push(memberKey(membership, id));
-    }
-    const response = await server.getLedgerEntries(...keys);
-    ledger = response.latestLedger;
-    for (const entry of response.entries) {
-      if (entry.val.type !== "contractData") {
-        throw new Error("Unexpected ledger entry type");
-      }
-      const data = entry.val.contractData;
-      const [, id] = scValToNative(data.key) as [string, number];
-      const { status, role } = scValToNative(data.val) as { status: number; role: number };
-      found.set(id, { id, status, role });
-    }
-  }
-  const members: Member[] = [];
-  for (let id = 0; id < count; id++) {
-    const member = found.get(id);
-    if (!member) {
-      throw new Error(`member ${id} is not in live storage (archived?)`);
-    }
-    members.push(member);
-  }
-  return { members, ledger };
 }
 
 function readMock(name: string): unknown {
@@ -120,7 +56,6 @@ function isIdList(value: unknown): value is string[] {
 function readMocks(): Mocks {
   const discordRoles = readMock("discord-roles.json") as Mocks["discordRoles"];
   const trustedForUser = readMock("trust-graph.json") as Mocks["trustedForUser"];
-  const votingHistory = readMock("prior-voting-history.json") as Mocks["votingHistory"];
 
   for (const [id, roles] of Object.entries(discordRoles)) {
     if (!isIdList(roles)) throw new Error(`discord-roles.json: ${id} must map to a list of names`);
@@ -129,27 +64,12 @@ function readMocks(): Mocks {
     if (!isIdList(trusted)) throw new Error(`trust-graph.json: ${id} must map to a list of ids`);
     if (trusted.includes(id)) throw new Error(`trust-graph.json: ${id} trusts itself`);
   }
-  const { usersRoundHistory, votesPerRound, submittersPerRound } = votingHistory;
-  if (!usersRoundHistory || !votesPerRound || !submittersPerRound) {
-    throw new Error(
-      "prior-voting-history.json needs usersRoundHistory, votesPerRound and submittersPerRound",
-    );
-  }
-  for (const [round, submissions] of Object.entries(votesPerRound)) {
-    for (const votes of Object.values(submissions)) {
-      for (const [id, vote] of Object.entries(votes)) {
-        if (!VOTES.has(vote)) {
-          throw new Error(`prior-voting-history.json: vote of ${id} in round ${round} is ${vote}`);
-        }
-      }
-    }
-  }
-  return { discordRoles, trustedForUser, votingHistory };
+  return { discordRoles, trustedForUser };
 }
 
 /**
  * Keeps ids of active members; collects the others so they can be reported
- * once per mock file. Revoked members do not count, not even as someone's
+ * once per data source. Revoked members do not count, not even as someone's
  * trusted id or as a voter.
  */
 function activeFilter(users: string[]) {
@@ -171,11 +91,7 @@ function activeFilter(users: string[]) {
   };
 }
 
-function filterKeys<T>(record: Record<string, T>, keep: (id: string) => boolean) {
-  return Object.fromEntries(Object.entries(record).filter(([id]) => keep(id)));
-}
-
-function buildInputs(active: Member[], mocks: Mocks) {
+function buildInputs(active: Member[], mocks: Mocks, history: VotingHistory) {
   const users = active.map((member) => String(member.id));
   const { keep, report } = activeFilter(users);
 
@@ -202,23 +118,12 @@ function buildInputs(active: Member[], mocks: Mocks) {
   }
   const trustGraph = { users, trustedForUser };
 
-  const history = mocks.votingHistory;
+  for (const id of history.users) keep(id);
+  report("voting history");
   const priorVotingHistory = {
     users,
-    usersRoundHistory: filterKeys(history.usersRoundHistory, keep),
-    votesPerRound: Object.fromEntries(
-      Object.entries(history.votesPerRound).map(([round, submissions]) => [
-        round,
-        Object.fromEntries(
-          Object.entries(submissions).map(([project, votes]) => [project, filterKeys(votes, keep)]),
-        ),
-      ]),
-    ),
-    submittersPerRound: Object.fromEntries(
-      Object.entries(history.submittersPerRound).map(([round, ids]) => [round, ids.filter(keep)]),
-    ),
+    usersRoundHistory: Object.fromEntries(users.map(id => [id, history.usersRoundHistory[id] ?? []])),
   };
-  report("prior-voting-history.json");
 
   return {
     "prior-voting-history": priorVotingHistory,
@@ -245,7 +150,9 @@ async function main() {
       (members.length > active.length ? `, ${members.length - active.length} revoked` : ""),
   );
 
-  const inputs = buildInputs(active, readMocks());
+  const mocks = readMocks();
+  const history = await readVotingHistory(target(config, membership), config.votingHistory);
+  const inputs = buildInputs(active, mocks, history);
   const createdAt = new Date().toISOString();
   const dir = resolve(flags.out ?? `${RUNS}r${round}-${createdAt.replace(/[:.]/g, "-")}`);
   if (existsSync(dir)) throw new Error(`${dir} already exists`);
@@ -262,17 +169,17 @@ async function main() {
     ledger,
     members,
     users: active.map((member) => String(member.id)),
+    votingHistoryRounds: history.roundByProject,
     mocked: [
       "assigned-reputation: discord_roles",
       "trust-graph: trustedForUser",
-      "prior-voting-history: usersRoundHistory, votesPerRound, submittersPerRound",
     ],
   };
   writeJson(paths.snapshot, snapshot);
   for (const [neuron, input] of Object.entries(inputs)) {
     writeJson(paths.input(neuron as keyof typeof inputs), input);
   }
-  console.error(`Saved the inputs of round ${round}. Next: node scripts/prove-all.ts --run <dir>`);
+  console.error(`Saved the inputs of round ${round}.`);
   console.log(dir);
 }
 

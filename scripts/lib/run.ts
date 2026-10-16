@@ -1,9 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Member } from "./member.ts";
 import type { Neuron } from "./neurons.ts";
-
-/** A minted membership token as read from chain. */
-export type Member = { id: number; status: number; role: number };
 
 /** `snapshot.json`: what `collect.ts` read, and for which contracts. */
 export type Snapshot = {
@@ -20,6 +18,8 @@ export type Snapshot = {
   members: Member[];
   /** Active members: the ids every neuron scores. */
   users: string[];
+  /** Voting project key -> round number, oldest registration first. */
+  votingHistoryRounds: Record<string, number>;
   /** Input fields that came from `scripts/mocks/`, not from chain. */
   mocked: string[];
 };
