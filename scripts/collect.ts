@@ -143,7 +143,7 @@ async function main() {
   }
   const membership = String(read(governance, "get_membership_contract"));
   const { members, ledger } = await readMembers(config, membership);
-  const active = members.filter((member) => member.status === 0);
+  const active = members.filter((member) => !member.revoked);
   if (active.length === 0) throw new Error("the membership contract has no active members");
   console.error(
     `Round ${round}: ${active.length} active members` +

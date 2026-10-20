@@ -1,6 +1,6 @@
 import { scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { VotingHistoryConfig } from "./config.ts";
-import { memberId } from "./member.ts";
+import { readMemberAddresses, resolveMemberId } from "./member.ts";
 import { isContractError, read, stellar, type Target } from "./stellar.ts";
 
 const NO_PROPOSAL_OR_PAGE_FOUND = 301;
@@ -15,9 +15,6 @@ type Proposal = {
   id: number;
   proposer: string;
   vote_data: { votes: Record<string, { address: string; weight: number }>[] };
-};
-type ProposalVotes = {
-  votes: string[];
 };
 
 function proposalIdLimit(tansu: Target, projectKey: string): number {
@@ -43,7 +40,7 @@ function proposalIdLimit(tansu: Target, projectKey: string): number {
   return value.u32;
 }
 
-function readProposal(tansu: Target, projectKey: string, id: number): ProposalVotes | null {
+function readProposalVoters(tansu: Target, projectKey: string, id: number): string[] | null {
   let proposal: Proposal;
   try {
     proposal = read(tansu, "get_proposal", [
@@ -68,9 +65,7 @@ function readProposal(tansu: Target, projectKey: string, id: number): ProposalVo
     if (body.address === proposal.proposer && body.weight === 0) continue;
     votes.push(body.address);
   }
-  return {
-    votes,
-  };
+  return votes;
 }
 
 function subProjectKeys(tansu: Target, parentProjectKey: string): string[] {
@@ -94,7 +89,7 @@ async function readRegistrationPage(config: VotingHistoryConfig, cursor: string)
   if (!Array.isArray(events)) throw new Error("Invalid project registration response.");
 
   const nextCursor = events.at(-1)?.paging_token ?? "";
-  if (events.length && (typeof nextCursor !== "string" || !nextCursor || nextCursor === cursor)) {
+  if (events.length && (typeof nextCursor !== "string" || !nextCursor)) {
     throw new Error("Registration history pagination did not advance.");
   }
 
@@ -109,12 +104,17 @@ async function readRegistrationPage(config: VotingHistoryConfig, cursor: string)
 async function projectRounds(config: VotingHistoryConfig, projectKeys: string[]): Promise<Record<string, number>> {
   const remainingProjects = new Set(projectKeys);
   const roundByProject = new Map<string, number>();
+  const seenCursors = new Set<string>();
   let cursor = "";
   while (remainingProjects.size) {
     const page = await readRegistrationPage(config, cursor);
     if (!page.projectKeys.length) {
       throw new Error(`No original registration found for ${[...remainingProjects].join(", ")}.`);
     }
+    if (seenCursors.has(page.nextCursor)) {
+      throw new Error("Registration history pagination did not advance.");
+    }
+    seenCursors.add(page.nextCursor);
     for (const projectKey of page.projectKeys) {
       if (!remainingProjects.has(projectKey)) continue;
       roundByProject.set(projectKey, roundByProject.size + 1);
@@ -129,23 +129,27 @@ async function projectRounds(config: VotingHistoryConfig, projectKeys: string[])
 export async function readVotingHistory(membership: Target, config: VotingHistoryConfig): Promise<VotingHistory> {
   const tansu = { ...membership, contract: config.tansuContract };
   const projectKeys = subProjectKeys(tansu, config.parentProjectKey);
+  if (!projectKeys.length) return { users: [], usersRoundHistory: {}, roundByProject: {} };
   const roundByProject = await projectRounds(config, projectKeys);
   const history: Record<string, Set<number>> = Object.create(null);
   for (const projectKey of projectKeys) {
     const limit = proposalIdLimit(tansu, projectKey);
     for (let id = 0; id < limit; id++) {
-      const proposal = readProposal(tansu, projectKey, id);
-      if (!proposal) continue;
-      for (const address of proposal.votes) {
+      const voters = readProposalVoters(tansu, projectKey, id);
+      if (!voters) continue;
+      for (const address of voters) {
         const rounds = history[address] ??= new Set<number>();
         rounds.add(roundByProject[projectKey]);
       }
     }
   }
 
+  const voters = Object.entries(history);
+  if (!voters.length) return { users: [], usersRoundHistory: {}, roundByProject };
+  const memberIdByAddress = await readMemberAddresses(membership.contract, config.explorerUrl);
   const memberHistory: Record<string, Set<number>> = Object.create(null);
-  for (const [address, rounds] of Object.entries(history)) {
-    const id = memberId(membership, address);
+  for (const [address, rounds] of voters) {
+    const id = resolveMemberId(membership, address, memberIdByAddress);
     if (id === null) continue;
     const userRounds = memberHistory[id] ??= new Set<number>();
     for (const round of rounds) userRounds.add(round);

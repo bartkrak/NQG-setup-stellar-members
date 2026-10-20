@@ -119,8 +119,8 @@ Voting powers, round 33:
 ```
 
 Proving the 13 testnet members takes about an hour on an Apple Silicon Mac,
-most of it the trust graph. Only the members and their roles come from chain;
-Discord roles, the trust graph and the voting history are synthetic data from
+most of it the trust graph. Members, their roles and voting history come from
+chain. Discord roles and the trust graph are synthetic data from
 [`scripts/mocks/`](scripts/mocks), see [Mocked data](#mocked-data). The
 sections [Set up the contracts](#set-up-the-contracts) and
 [Run the full flow](#run-the-full-flow) explain each step.
@@ -131,6 +131,7 @@ sections [Set up the contracts](#set-up-the-contracts) and
 ```mermaid
 flowchart LR
     membership["Stellar Membership<br/>contract"] -->|members, roles| collect["collect.ts"]
+    tansu["Tansu + Stellar Expert"] -->|voting history| collect
     mocks["scripts/mocks/"] --> collect
     collect -->|"inputs/"| prove["prove-all.ts<br/>host prove (zkvm/)"]
     prove -->|"proofs/"| upload["upload-all.ts"]
@@ -141,8 +142,9 @@ flowchart LR
 
 1. `collect.ts` asks the NQG contract for its active round and for the
    membership contract it validates against, reads the active members and
-   their roles from that contract, and writes one private input file per
-   neuron, with the mocked data for what is not on chain yet.
+   their roles from that contract, collects project voting history from
+   Tansu, and writes one private input file per neuron. Discord roles and
+   trust relationships come from the mocked data.
 2. `prove-all.ts` runs `host prove` for each neuron. The zkVM runs the neuron
    as a guest program on the private input. The guest calculates the scores
    and commits the round and the scores as its public output, the journal. The
@@ -316,7 +318,7 @@ input:
 
 | Step | Script | Reads | Writes to the run folder |
 | --- | --- | --- | --- |
-| 1 | `collect.ts` | the NQG contract (active round, membership address), the membership contract (members), [`scripts/mocks/`](scripts/mocks) | `snapshot.json`, `inputs/<neuron>.json` |
+| 1 | `collect.ts` | NQG and membership contracts, Tansu, Stellar Expert, [`scripts/mocks/`](scripts/mocks) | `snapshot.json`, `inputs/<neuron>.json` |
 | 2 | `prove-all.ts` | `inputs/` | `proofs/<neuron>.json` |
 | 3 | `upload-all.ts` | `proofs/` | `submitted.json`; on chain the three results and the voting powers |
 
@@ -330,13 +332,17 @@ the script dependencies installed.
 cp scripts/flow.config.example.json scripts/flow.config.json
 ```
 
-Then set `governance` and `source`. The example points at testnet.
+Set `governance` and `source`, and check the `votingHistory` settings for your
+network and parent project. The example points at testnet.
 
 | Field | What it is |
 | --- | --- |
 | `rpcUrl`, `networkPassphrase` | The network. Every script passes both to the Stellar CLI, so a `STELLAR_RPC_URL` in `.env` cannot redirect them |
 | `governance` | The NQG contract id |
-| `source` | Stellar CLI identity of the NQG admin. It pays for the reads and signs the uploads |
+| `source` | Stellar CLI identity of the NQG admin, used to simulate reads and sign uploads |
+| `votingHistory.tansuContract` | Tansu contract id containing the projects and proposals |
+| `votingHistory.parentProjectKey` | Parent project key whose child projects supply voting history |
+| `votingHistory.explorerUrl` | Stellar Expert API base URL for the same network, used to read project registrations and membership transfers |
 | `neurons` | Layer and neuron id of each neuron in the NQG contract |
 
 `scripts/flow.config.json` is in `.gitignore`. Every script takes
@@ -352,8 +358,13 @@ The script asks the NQG contract for its active round and for the membership
 contract it validates against, reads every minted token from that membership
 contract, and keeps the active ones. Their ids are the users of all three
 neurons, since `calculate_voting_powers` needs every neuron to score the same
-members. It then builds each neuron's input from the members and the mocked
-data, and prints the run folder. `--out <dir>` picks the folder.
+members. Voting history comes from the configured Tansu child projects,
+numbered from 1 in registration order. Membership transfer events connect
+past and current voting addresses to the same member id.
+
+The script combines these reads with the mocked Discord roles and trust
+graph, writes each neuron's input, and prints the run folder. `--out <dir>`
+picks the folder.
 
 ### 2. Prove
 
@@ -396,23 +407,18 @@ replaces the stored results.
 
 ### Mocked data
 
-Only the members and their roles are on chain today. The rest comes from
-synthetic files in [`scripts/mocks/`](scripts/mocks), keyed by membership
-token id:
+Discord roles and trust relationships come from synthetic files in
+[`scripts/mocks/`](scripts/mocks), keyed by membership token id:
 
 | File | Becomes | Later from |
 | --- | --- | --- |
 | `discord-roles.json` | `discord_roles` of assigned reputation | Discord roles of the account the member bound |
 | `trust-graph.json` | `trustedForUser` of the trust graph | wherever members declare trust |
-| `prior-voting-history.json` | `usersRoundHistory`, `votesPerRound`, `submittersPerRound` | the voting records |
 
-Ids that are not active members are dropped, as truster, trusted id, voter or
-submitter, and the script lists them. Active members missing from a file get
-nothing: no roles, no trust, no history. The trust graph needs at least one
-trust between active members, since the guest fails on an empty graph.
-
-When a source moves on chain, only its reader in `collect.ts` changes. The
-input files and the other two scripts stay as they are.
+Ids that are not active members are dropped from the mocked data, and the
+script lists them. Active members missing from a file get no roles or trust.
+The trust graph needs at least one trust between active members, since the
+guest fails on an empty graph.
 
 
 ## The zkVM prover
