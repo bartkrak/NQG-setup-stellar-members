@@ -92,9 +92,10 @@ upload for that guest fails with `InvalidProof`.
 The two contracts point at each other:
 
 - **NQG reads the membership contract** to validate voters. `set_neuron_result` calls `member(token_id)` for every
-  key of the uploaded map and requires `status` to be `0` (Active). A revoked token (`status` `1`), a token never
-  minted (`NonExistentToken`), or a contract that cannot answer rejects the whole upload with `NotAMember`, and
-  nothing is written. Only `status` is read from the record, so changes to its other fields do not affect NQG.
+  key of the uploaded map and requires `revoked` to be `false`. A revoked token, a token never minted
+  (`NonExistentToken`), a record without a `revoked` flag, or a contract that cannot answer rejects the whole upload
+  with `NotAMember`, and nothing is written. Only `revoked` is read from the record, so changes to its other fields do
+  not affect NQG.
   `owner_of` is not used: it succeeds for revoked tokens.
 - **The membership contract reads NQG** to show a member's score (`governance(token_id)`, `trait_value(token_id,
   "nqg")`). Its `get_nqg` calls `get_voting_power_for_user(token_id: u32) -> i64`. Both contracts use 6 decimals, so the

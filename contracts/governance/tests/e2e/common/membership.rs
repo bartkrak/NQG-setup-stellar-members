@@ -16,21 +16,13 @@ pub enum MembershipError {
     NonExistentToken = 200,
 }
 
-/// Same variants and values as the real `Status`.
-#[contracttype]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Status {
-    Active = 0,
-    Revoked = 1,
-}
-
-/// The real `Member` has more fields (external accounts, bio, projects); the
-/// governance contract reads only `status`. `role` is here so the record is
-/// not a single-field map, as on the network.
+/// The real `Member` has more fields (external accounts, bio, projects,
+/// look); the governance contract reads only `revoked`. `role` is here so
+/// the record is not a single-field map, as on the network.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Member {
-    pub status: Status,
+    pub revoked: bool,
     pub role: u32,
 }
 
@@ -67,7 +59,7 @@ impl MockMembership {
         env.storage().instance().set(
             &DataKey::Member(token_id),
             &Member {
-                status: Status::Active,
+                revoked: false,
                 role: 0,
             },
         );
@@ -75,14 +67,10 @@ impl MockMembership {
     }
 
     /// Revoke `token_id`, or reinstate it with `revoked` false. Only the
-    /// status changes, as in the real contract.
+    /// flag changes, as in the real contract.
     pub fn revoke(env: &Env, token_id: u32, revoked: bool) {
         let mut member = Self::member(env, token_id);
-        member.status = if revoked {
-            Status::Revoked
-        } else {
-            Status::Active
-        };
+        member.revoked = revoked;
         env.storage()
             .instance()
             .set(&DataKey::Member(token_id), &member);
