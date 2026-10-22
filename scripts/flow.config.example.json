@@ -11,6 +11,7 @@
   "neurons": {
     "prior-voting-history": { "layerId": "0", "neuronId": "0" },
     "assigned-reputation": { "layerId": "0", "neuronId": "1" },
-    "trust-graph": { "layerId": "0", "neuronId": "2" }
+    "trust-graph": { "layerId": "0", "neuronId": "2" },
+    "trust-loss": { "layerId": "0", "neuronId": "3" }
   }
 }

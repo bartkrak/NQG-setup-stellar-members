@@ -24,6 +24,7 @@ const IMAGE_ID_CONSTS: Record<Neuron, string> = {
   "prior-voting-history": "PRIOR_VOTING_HISTORY_IMAGE_ID",
   "assigned-reputation": "ASSIGNED_REPUTATION_IMAGE_ID",
   "trust-graph": "TRUST_GRAPH_IMAGE_ID",
+  "trust-loss": "TRUST_LOSS_IMAGE_ID",
 };
 
 function parseFlags() {

@@ -16,6 +16,7 @@ pub enum NeuronGuest {
     PriorVotingHistory,
     AssignedReputation,
     TrustGraph,
+    TrustLoss,
 }
 
 /// A proof the verifier accepted. The journal itself is only in the
@@ -46,6 +47,12 @@ const TRUST_GRAPH_IMAGE_ID: [u8; 32] = [
     0xbf, 0xcd, 0x5b, 0x20, 0xfc, 0xe1, 0x26, 0xc1, 0xce, 0x20, 0xe2, 0xe7, 0x16, 0xff, 0x01, 0xd6,
 ];
 
+/// Image ID of the trust-loss guest (`host image-id`).
+const TRUST_LOSS_IMAGE_ID: [u8; 32] = [
+    0x4a, 0x80, 0x43, 0x60, 0xd2, 0xe6, 0xc4, 0x0f, 0x59, 0x36, 0x5d, 0xaf, 0xaa, 0xba, 0xb0, 0xc4,
+    0x71, 0xd0, 0xad, 0xa3, 0x1b, 0xa6, 0x14, 0x19, 0x14, 0xca, 0xa8, 0xff, 0xef, 0x33, 0xb0, 0xeb,
+];
+
 impl NeuronGuest {
     /// The Image ID the verifier checks this guest's proofs against.
     pub fn image_id(self, env: &Env) -> BytesN<32> {
@@ -53,6 +60,7 @@ impl NeuronGuest {
             NeuronGuest::PriorVotingHistory => &PRIOR_VOTING_HISTORY_IMAGE_ID,
             NeuronGuest::AssignedReputation => &ASSIGNED_REPUTATION_IMAGE_ID,
             NeuronGuest::TrustGraph => &TRUST_GRAPH_IMAGE_ID,
+            NeuronGuest::TrustLoss => &TRUST_LOSS_IMAGE_ID,
         };
         BytesN::from_array(env, image_id)
     }

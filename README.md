@@ -49,7 +49,7 @@ contract.
 ## Quick start (testnet)
 
 One round on testnet: read the members of the Stellar Membership testnet
-contract, prove the three neurons on your machine, and store the scores, the
+contract, prove the four neurons on your machine, and store the scores, the
 proofs and the voting powers in an NQG contract.
 
 You need, as described in [Requirements](#requirements): Rust with the
@@ -72,7 +72,7 @@ the repository root.
 
 3. Deploy the Groth16 verifier and the NQG contract, and add the neuron layer.
    If your team already has an NQG contract on testnet and you hold its admin
-   key, skip this step and set `NQG` to its id instead.
+   key, set `NQG` to its id.
 
    ```sh
    git clone https://github.com/NethermindEth/stellar-risc0-verifier.git ../stellar-risc0-verifier
@@ -88,7 +88,7 @@ the repository root.
      --membership_contract CBIQGYBF2LPQD4W7Z3DOUUY7RBPKP3OHUOLQ6MASI7GYTBOPQPV62T7X \
      --verifier $VERIFIER)
    stellar contract invoke --network testnet --source admin --id $NQG -- add_layer \
-     --raw_neurons '[["prior-voting-history",1000000],["assigned-reputation",1000000],["trust-graph",1000000]]' \
+     --raw_neurons '[["prior-voting-history",1000000],["assigned-reputation",1000000],["trust-graph",1000000],["trust-loss",1000000]]' \
      --layer_aggregator Sum
    ```
 
@@ -104,8 +104,8 @@ the repository root.
 
    ```sh
    RUN=$(node scripts/collect.ts)            # members from chain plus mocked data, into runs/r33-<time>/
-   node scripts/prove-all.ts --run "$RUN"    # three Groth16 proofs, about an hour, see below
-   node scripts/upload-all.ts --run "$RUN"   # three uploads, calculate_voting_powers, prints the powers
+   node scripts/prove-all.ts --run "$RUN"    # four Groth16 proofs
+   node scripts/upload-all.ts --run "$RUN"   # four uploads, calculate_voting_powers, prints the powers
    ```
 
 The last command ends with every active member's voting power, for example:
@@ -118,9 +118,10 @@ Voting powers, round 33:
        ...
 ```
 
-Proving the 13 testnet members takes about an hour on an Apple Silicon Mac,
-most of it the trust graph. Members, their roles and voting history come from
-chain. Discord roles and the trust graph are synthetic data from
+Proving time depends on the members and the machine, with the trust graph
+being the most expensive existing neuron. Members, their roles and voting
+history come from chain. Discord roles, trust relationships and the NQG sums
+used by trust loss are synthetic data from
 [`scripts/mocks/`](scripts/mocks), see [Mocked data](#mocked-data). The
 sections [Set up the contracts](#set-up-the-contracts) and
 [Run the full flow](#run-the-full-flow) explain each step.
@@ -144,7 +145,8 @@ flowchart LR
    membership contract it validates against, reads the active members and
    their roles from that contract, collects project voting history from
    Tansu, and writes one private input file per neuron. Discord roles and
-   trust relationships come from the mocked data.
+   trust relationships, trust history and NQG sums for trust loss come from
+   the mocked data.
 2. `prove-all.ts` runs `host prove` for each neuron. The zkVM runs the neuron
    as a guest program on the private input. The guest calculates the scores
    and commits the round and the scores as its public output, the journal. The
@@ -294,16 +296,17 @@ only it can upload scores and calculate voting powers.
      --verifier $VERIFIER)
    ```
 
-3. One layer with the three neurons, each with weight 1.0, summed:
+3. One layer with the four neurons, each with weight 1.0, summed:
 
    ```sh
    stellar contract invoke --network testnet --source admin --id $NQG -- add_layer \
-     --raw_neurons '[["prior-voting-history",1000000],["assigned-reputation",1000000],["trust-graph",1000000]]' \
+     --raw_neurons '[["prior-voting-history",1000000],["assigned-reputation",1000000],["trust-graph",1000000],["trust-loss",1000000]]' \
      --layer_aggregator Sum
    ```
 
-   On a new contract the layer gets id `0` and the neurons ids `0`, `1` and
-   `2`, in this order. Name the neurons exactly like this: `upload-all.ts`
+   On a new contract the layer gets id `0` and the neurons ids `0`, `1`, `2`
+   and `3`, in this order.
+   Name the neurons exactly like this: `upload-all.ts`
    refuses to send a neuron's scores to a neuron with another name.
 
 For the next round, `set_current_round --round <round>` moves the contract on.
@@ -320,7 +323,7 @@ input:
 | --- | --- | --- | --- |
 | 1 | `collect.ts` | NQG and membership contracts, Tansu, Stellar Expert, [`scripts/mocks/`](scripts/mocks) | `snapshot.json`, `inputs/<neuron>.json` |
 | 2 | `prove-all.ts` | `inputs/` | `proofs/<neuron>.json` |
-| 3 | `upload-all.ts` | `proofs/` | `submitted.json`; on chain the three results and the voting powers |
+| 3 | `upload-all.ts` | `proofs/` | `submitted.json`; on chain the four results and the voting powers |
 
 Requirements: the prover built and Docker running (see
 [Build the prover](#build-the-prover)), the contracts set up as above, and
@@ -356,14 +359,15 @@ RUN=$(node scripts/collect.ts)
 
 The script asks the NQG contract for its active round and for the membership
 contract it validates against, reads every minted token from that membership
-contract, and keeps the active ones. Their ids are the users of all three
+contract, and keeps the active ones. Their ids are the users of all four
 neurons, since `calculate_voting_powers` needs every neuron to score the same
 members. Voting history comes from the configured Tansu child projects,
 numbered from 1 in registration order. Membership transfer events connect
 past and current voting addresses to the same member id.
 
-The script combines these reads with the mocked Discord roles and trust
-graph, writes each neuron's input, and prints the run folder. `--out <dir>`
+The script combines these reads with the mocked Discord roles, current
+trust graph, historical trust lists and NQG sums for trust loss, writes each
+neuron's input, and prints the run folder. `--out <dir>`
 picks the folder.
 
 ### 2. Prove
@@ -372,8 +376,8 @@ picks the folder.
 node scripts/prove-all.ts --run "$RUN"
 ```
 
-Before proving, the script compares the prover's Image IDs with the constants
-in [`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs)
+Before proving, the script compares all four of the prover's Image IDs with
+the constants in [`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs)
 and stops if they differ, because the contract would reject the proofs. It
 then runs `host prove --round <round>` for each neuron, one after another, and
 checks that every proof is for the run's round and scores exactly the run's
@@ -400,36 +404,39 @@ node scripts/upload-all.ts --run "$RUN"
 Nothing is sent until these simulated checks pass: the contract's active
 round is the run's round, it still validates against the membership contract
 the run read, every neuron in the contract is in the config, and each neuron
-has the expected name. The script then calls `set_neuron_result` for the three
+has the expected name. The script then calls `set_neuron_result` for the four
 neurons, `calculate_voting_powers`, and prints the voting powers. Each step is
 recorded in `submitted.json`. Running it again sends everything again, which
 replaces the stored results.
 
 ### Mocked data
 
-Discord roles and trust relationships come from synthetic files in
+Discord roles, trust relationships and NQG sums come from synthetic files in
 [`scripts/mocks/`](scripts/mocks), keyed by membership token id:
 
 | File | Becomes | Later from |
 | --- | --- | --- |
 | `discord-roles.json` | `discord_roles` of assigned reputation | Discord roles of the account the member bound |
 | `trust-graph.json` | `trustedForUser` of the trust graph | wherever members declare trust |
+| `trust-loss.json` | Complete `trustedForUserPerRound` and `neuronsResultsSum` of trust loss | Trust declarations per round and the chosen base NQG scores |
 
-Ids that are not active members are dropped from the mocked data, and the
-script lists them. Active members missing from a file get no roles or trust.
+For Discord roles and the trust graph, ids that are not active members are
+dropped from the mocked data, and the script lists them. Active members
+missing from those files get no roles or trust.
 The trust graph needs at least one trust between active members, since the
 guest fails on an empty graph.
 
 
 ## The zkVM prover
 
-The current prover supports three neurons:
+The current prover supports four neurons:
 
 | `--neuron` | Private input | Scoring logic | Example input |
 | --- | --- | --- | --- |
 | `prior-voting-history` | `users`, `usersRoundHistory`, optional `votesPerRound` and `submittersPerRound` | Voting-history and active-participation bonuses. Without `votesPerRound` every round a user voted in counts as fully active; without `submittersPerRound` there is no submitter bonus | [`example_prior_voting_history.json`](zkvm/data/example_prior_voting_history.json) |
 | `assigned-reputation` | `users`, each with `id`, `tier`, `discord_roles` | Reputation-tier bonus plus Discord-role bonuses | [`example_assigned_reputation.json`](zkvm/data/example_assigned_reputation.json) |
 | `trust-graph` | `users`, `trustedForUser` | Normalized PageRank with bonuses for trust from highly trusted users and filled trust lists | [`example_trust_graph.json`](zkvm/data/example_trust_graph.json) |
+| `trust-loss` | `users`, `trustedForUserPerRound`, `neuronsResultsSum` | Negative logistic penalty when at least three distinct members remove trust | [`example_trust_loss.json`](zkvm/data/example_trust_loss.json) |
 
 The implementation is split into:
 
@@ -461,22 +468,23 @@ The binary is `zkvm/target/release/host`. It has two commands:
 | `host image-id --neuron <neuron>` | Prints the Image ID of the guest compiled into this binary |
 | `host prove --neuron <neuron> --input <json> --output <json> [--round <round>]` | Generates a proof |
 
-`<neuron>` is `prior-voting-history`, `assigned-reputation` or `trust-graph`.
+`<neuron>` is `prior-voting-history`, `assigned-reputation`, `trust-graph`
+or `trust-loss`.
 If `--neuron` is left out, `prior-voting-history` is used, so always pass it.
 
-Print the three Image IDs to compare them with the guest IDs expected by
+Print the four Image IDs to compare them with the guest IDs expected by
 the existing NQG contract:
 
 ```sh
 zkvm/target/release/host image-id --neuron prior-voting-history
 zkvm/target/release/host image-id --neuron assigned-reputation
 zkvm/target/release/host image-id --neuron trust-graph
+zkvm/target/release/host image-id --neuron trust-loss
 ```
 
 Because the guests are compiled in a pinned Docker image, the same commit gives
 the same Image IDs on every machine and in every folder. Anyone can check the
 Image IDs in the contract by building that commit and running these commands.
-
 
 ## Generate a proof
 
@@ -537,6 +545,15 @@ zkvm/target/release/host prove --neuron trust-graph \
   --output zkvm/artifacts/trust-graph-33.json
 ```
 
+Trust loss:
+
+```sh
+zkvm/target/release/host prove --neuron trust-loss \
+  --input zkvm/data/example_trust_loss.json \
+  --output zkvm/artifacts/trust-loss-33.json \
+  --round 33
+```
+
 The files in `zkvm/data/` are synthetic, and their ids are not members of the
 testnet membership contract, so the contract would refuse their scores with
 `NotAMember`. To prove something you can submit, use an input written by
@@ -578,9 +595,9 @@ the proof.
 
 ## Submit the scores
 
-`upload-all.ts` submits all three neurons of a run. To submit one output file
+`upload-all.ts` submits all four neurons of a run. To submit one output file
 by hand, you need the NQG contract id, the layer and neuron ids of the neuron
-(`0` to `2` with the setup above) and a proof for the contract's active round.
+(`0` to `3` with the setup above) and a proof for the contract's active round.
 Build the prover from the commit matching the contract's guest Image IDs;
 otherwise the contract rejects the proof.
 
@@ -713,7 +730,7 @@ step:
 2. Calls `member(id)` on the membership contract for every id in `result` and
    requires each one to be active.
 3. Takes the Image ID constant of `guest`: `PriorVotingHistory`,
-   `AssignedReputation` or `TrustGraph`.
+   `AssignedReputation`, `TrustGraph` or `TrustLoss`.
 4. Computes `journal_digest = sha256(journal)`.
 5. Calls `verify(seal, image_id, journal_digest)` on the verifier. If the
    verifier rejects the proof or cannot answer, the call fails with
@@ -749,9 +766,10 @@ nothing unless such a proof exists for the submitted journal.
 
 What is not proven:
 
-- **The input.** The proof does not show that the voting history, roles, or
-  tiers are real or complete, or who supplied them. The input provider is
-  trusted.
+- **The input.** The proof does not show that the voting history, roles,
+  tiers or trust declarations are real or complete, or who supplied them.
+  Trust loss also takes NQG sums as input; these are not linked to the other
+  neurons' proofs. The input provider is trusted.
 - **The round.** The proof shows which round the scores were calculated for,
   not that it is the actual current round. The contract does not compare the
   round in the journal with its active round; the scripts do.
@@ -775,7 +793,7 @@ can change the Image ID, even removing a comment line, because panic messages
 in the binary can contain line numbers. A dependency update or a change to
 the pinned Docker builder can change it too.
 
-Rebuild the prover and run `host image-id` for all three neurons, or let
+Rebuild the prover and run `host image-id` for all four neurons, or let
 `prove-all.ts` do it. Compare the IDs with the constants in
 [`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs).
 If an ID changes, the contract administrator must update the accepted guest
