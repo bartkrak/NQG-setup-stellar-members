@@ -43,6 +43,7 @@ function scaledScoresJson(entries: Array<[string, unknown]>): string {
     if (typeof score !== "number") {
       throw new Error(`score of ${id} is ${JSON.stringify(score)}, not a finite number`);
     }
+    if (Math.abs(score) < 10 ** -DECIMALS) score = 0;
     return `${JSON.stringify(id)}:${scaleToI64(String(score))}`;
   });
   return `{${fields.join(",")}}`;

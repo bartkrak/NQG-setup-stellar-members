@@ -63,7 +63,7 @@ and prints `i64` values as JSON numbers, for example `1000000`.
 
 `set_neuron_result` takes, next to the result, the proof from `host prove` (`zkvm/`):
 
-- `guest`: the guest program that computed the result, `PriorVotingHistory`, `AssignedReputation` or `TrustGraph`.
+- `guest`: the guest program that computed the result, `PriorVotingHistory`, `AssignedReputation`, `TrustGraph` or `TrustLoss`.
   Each has its Image ID fixed as a constant in [`src/verifier.rs`](src/verifier.rs).
 - `journal`: the guest's public output (`journal` in the prover output JSON, hex on the CLI).
 - `seal`: the 4-byte verifier selector followed by the Groth16 seal (`seal` in the output JSON).
@@ -79,13 +79,23 @@ The journal itself is not stored, only its digest; it stays readable in the `set
 
 [`scripts/submit-neuron.ts`](../../scripts/submit-neuron.ts) sends a prover output file: it checks the round against
 `get_current_round` and the layer and neuron against `get_neuron`, scales the scores to 6 decimals and calls
-`set_neuron_result`. [`scripts/upload-all.ts`](../../scripts/upload-all.ts) does the same for all three neurons of a
+`set_neuron_result`. [`scripts/upload-all.ts`](../../scripts/upload-all.ts) does the same for all four neurons of a
 run, then calls `calculate_voting_powers`. The [root README](../../README.md) walks through the whole flow, from
 collecting the members to voting powers.
 
 A changed guest, core crate, dependency or builder image can change an Image ID. Compare the constants with
 `host image-id --neuron <n>` before deploying, and `upgrade` the contract when they change: with a stale Image ID every
 upload for that guest fails with `InvalidProof`.
+
+The standard summed layer contains `prior-voting-history`, `assigned-reputation`, `trust-graph` and `trust-loss`,
+with neuron ids `0` through `3` and weights `1000000` (1.0). With nonnegative NQG sums, trust loss produces zero or
+a negative score from historical trust lists and supplied NQG sums. Its proof verifies that calculation, but does not authenticate those
+inputs or link the supplied sums to other neurons' proofs. The flow currently supplies synthetic values from
+[`scripts/mocks/trust-loss.json`](../../scripts/mocks/trust-loss.json).
+The NQG sum map is supplied as in the reference neuron; missing entries are not replaced with zero.
+
+An existing deployment must be upgraded to accept the `TrustLoss` guest and the current four Image IDs, and its
+layer and script config must include `trust-loss`. Adding only the config entry cannot enable an older contract.
 
 ## Connecting to Stellar Membership
 
@@ -148,7 +158,7 @@ instead of redeploying NQG.
 
 This deploys your own membership contract next to NQG on testnet, so you can mint and revoke members yourself, and runs
 the full flow against it: the Groth16 verifier, the membership contract with five members (one of them revoked) and
-NQG, then the three flow scripts from [`scripts/`](../../scripts) collect the members, prove the three neurons and
+NQG, then the three flow scripts from [`scripts/`](../../scripts) collect the members, prove the four neurons and
 upload the proofs, which the verifier checks. To score the members of the shared testnet membership contract instead,
 follow the Quick start in the [root README](../../README.md), which also lists what you need installed.
 
@@ -205,7 +215,7 @@ NQG=$(stellar contract deploy --network testnet --source-account nqg-admin \
   --wasm contracts/target/wasm32v1-none/release/governance.wasm \
   -- --admin nqg-admin --current_round 33 --membership_contract $MEMBERSHIP --verifier $VERIFIER)
 stellar contract invoke --network testnet --source-account nqg-admin --id $NQG -- add_layer \
-  --raw_neurons '[["prior-voting-history",1000000],["assigned-reputation",1000000],["trust-graph",1000000]]' \
+  --raw_neurons '[["prior-voting-history",1000000],["assigned-reputation",1000000],["trust-graph",1000000],["trust-loss",1000000]]' \
   --layer_aggregator Sum
 ```
 
@@ -235,7 +245,7 @@ node scripts/prove-all.ts --run "$RUN"
 node scripts/upload-all.ts --run "$RUN" --config $CONFIG
 ```
 
-The verifier accepts all three proofs, and the script ends with:
+The verifier accepts all four proofs, and the script prints the resulting voting powers, for example:
 
 ```
 Voting powers, round 33:

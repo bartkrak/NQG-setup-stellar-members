@@ -6,7 +6,7 @@ import type { Target } from "./lib/stellar.ts";
 
 const USAGE = `Usage:
   node scripts/submit-neuron.ts \\
-    --neuron prior-voting-history|assigned-reputation|trust-graph \\
+    --neuron prior-voting-history|assigned-reputation|trust-graph|trust-loss \\
     --output <output.json> \\
     --layer-id <id> \\
     --neuron-id <id> \\

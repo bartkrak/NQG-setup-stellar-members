@@ -12,8 +12,8 @@ const USAGE = `Usage:
   node scripts/collect.ts [--config <flow.config.json>] [--out <run dir>]
 
 Reads active members and project voting history, adds the mocked Discord
-roles and trust graph from scripts/mocks/, and writes a run folder with the
-input of every neuron. Prints the run folder.`;
+roles, trust graph and trust loss data from scripts/mocks/, and writes a run
+folder with the input of every neuron. Prints the run folder.`;
 
 const MOCKS = fileURLToPath(new URL("mocks/", import.meta.url));
 const RUNS = fileURLToPath(new URL("../runs/", import.meta.url));
@@ -27,6 +27,10 @@ type Mocks = {
   discordRoles: Record<string, string[]>;
   /** id -> ids it trusts (`scripts/mocks/trust-graph.json`). */
   trustedForUser: Record<string, string[]>;
+  trustLoss: {
+    trustedForUserPerRound: Record<string, Record<string, string[]>>;
+    neuronsResultsSum: Record<string, number>;
+  };
 };
 
 function parseFlags() {
@@ -56,6 +60,7 @@ function isIdList(value: unknown): value is string[] {
 function readMocks(): Mocks {
   const discordRoles = readMock("discord-roles.json") as Mocks["discordRoles"];
   const trustedForUser = readMock("trust-graph.json") as Mocks["trustedForUser"];
+  const trustLoss = readMock("trust-loss.json") as Mocks["trustLoss"];
 
   for (const [id, roles] of Object.entries(discordRoles)) {
     if (!isIdList(roles)) throw new Error(`discord-roles.json: ${id} must map to a list of names`);
@@ -64,7 +69,7 @@ function readMocks(): Mocks {
     if (!isIdList(trusted)) throw new Error(`trust-graph.json: ${id} must map to a list of ids`);
     if (trusted.includes(id)) throw new Error(`trust-graph.json: ${id} trusts itself`);
   }
-  return { discordRoles, trustedForUser };
+  return { discordRoles, trustedForUser, trustLoss };
 }
 
 /**
@@ -117,6 +122,11 @@ function buildInputs(active: Member[], mocks: Mocks, history: VotingHistory) {
     throw new Error("trust-graph.json has no trust between active members");
   }
   const trustGraph = { users, trustedForUser };
+  const trustLoss = {
+    users,
+    trustedForUserPerRound: mocks.trustLoss.trustedForUserPerRound,
+    neuronsResultsSum: mocks.trustLoss.neuronsResultsSum,
+  };
 
   for (const id of history.users) keep(id);
   report("voting history");
@@ -129,6 +139,7 @@ function buildInputs(active: Member[], mocks: Mocks, history: VotingHistory) {
     "prior-voting-history": priorVotingHistory,
     "assigned-reputation": assignedReputation,
     "trust-graph": trustGraph,
+    "trust-loss": trustLoss,
   } as const;
 }
 
@@ -173,6 +184,7 @@ async function main() {
     mocked: [
       "assigned-reputation: discord_roles",
       "trust-graph: trustedForUser",
+      "trust-loss: trustedForUserPerRound, neuronsResultsSum",
     ],
   };
   writeJson(paths.snapshot, snapshot);

@@ -29,5 +29,10 @@ pub fn decode_journal(journal: &risc0_zkvm::Journal, neuron: Neuron) -> Result<V
                 journal.decode().context("Invalid public result")?;
             Ok(serde_json::to_value(&output)?)
         }
+        Neuron::TrustLoss => {
+            let output: trust_loss_core::Output =
+                journal.decode().context("Invalid public result")?;
+            Ok(serde_json::to_value(&output)?)
+        }
     }
 }

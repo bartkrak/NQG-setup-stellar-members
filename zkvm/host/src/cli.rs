@@ -20,6 +20,7 @@ pub enum Neuron {
     PriorVotingHistory,
     AssignedReputation,
     TrustGraph,
+    TrustLoss,
 }
 
 #[derive(Subcommand)]
