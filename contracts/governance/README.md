@@ -63,7 +63,7 @@ and prints `i64` values as JSON numbers, for example `1000000`.
 
 `set_neuron_result` takes, next to the result, the proof from `host prove` (`zkvm/`):
 
-- `guest`: the guest program that computed the result, `PriorVotingHistory`, `AssignedReputation` or `TrustGraph`.
+- `guest`: the guest program that computed the result, `PriorVotingHistory`, `AssignedReputation`, `TrustGraph` or `TrustLoss`.
   Each has its Image ID fixed as a constant in [`src/verifier.rs`](src/verifier.rs).
 - `journal`: the guest's public output (`journal` in the prover output JSON, hex on the CLI).
 - `seal`: the 4-byte verifier selector followed by the Groth16 seal (`seal` in the output JSON).
@@ -79,20 +79,33 @@ The journal itself is not stored, only its digest; it stays readable in the `set
 
 [`scripts/submit-neuron.ts`](../../scripts/submit-neuron.ts) sends a prover output file: it checks the round against
 `get_current_round` and the layer and neuron against `get_neuron`, scales the scores to 6 decimals and calls
-`set_neuron_result`. The [root README](../../README.md) walks through the whole flow, from proving to voting powers.
+`set_neuron_result`. [`scripts/upload-all.ts`](../../scripts/upload-all.ts) does the same for all four neurons of a
+run, then calls `calculate_voting_powers`. The [root README](../../README.md) walks through the whole flow, from
+collecting the members to voting powers.
 
 A changed guest, core crate, dependency or builder image can change an Image ID. Compare the constants with
 `host image-id --neuron <n>` before deploying, and `upgrade` the contract when they change: with a stale Image ID every
 upload for that guest fails with `InvalidProof`.
+
+The standard summed layer contains `prior-voting-history`, `assigned-reputation`, `trust-graph` and `trust-loss`,
+with neuron ids `0` through `3` and weights `1000000` (1.0). With nonnegative NQG sums, trust loss produces zero or
+a negative score from historical trust lists and supplied NQG sums. Its proof verifies that calculation, but does not authenticate those
+inputs or link the supplied sums to other neurons' proofs. The flow currently supplies synthetic values from
+[`scripts/mocks/trust-loss.json`](../../scripts/mocks/trust-loss.json).
+The NQG sum map is supplied as in the reference neuron; missing entries are not replaced with zero.
+
+An existing deployment must be upgraded to accept the `TrustLoss` guest and the current four Image IDs, and its
+layer and script config must include `trust-loss`. Adding only the config entry cannot enable an older contract.
 
 ## Connecting to Stellar Membership
 
 The two contracts point at each other:
 
 - **NQG reads the membership contract** to validate voters. `set_neuron_result` calls `member(token_id)` for every
-  key of the uploaded map and requires `status` to be `0` (Active). A revoked token (`status` `1`), a token never
-  minted (`NonExistentToken`), or a contract that cannot answer rejects the whole upload with `NotAMember`, and
-  nothing is written. Only `status` is read from the record, so changes to its other fields do not affect NQG.
+  key of the uploaded map and requires `revoked` to be `false`. A revoked token, a token never minted
+  (`NonExistentToken`), a record without a `revoked` flag, or a contract that cannot answer rejects the whole upload
+  with `NotAMember`, and nothing is written. Only `revoked` is read from the record, so changes to its other fields do
+  not affect NQG.
   `owner_of` is not used: it succeeds for revoked tokens.
 - **The membership contract reads NQG** to show a member's score (`governance(token_id)`, `trait_value(token_id,
   "nqg")`). Its `get_nqg` calls `get_voting_power_for_user(token_id: u32) -> i64`. Both contracts use 6 decimals, so the
@@ -142,98 +155,131 @@ validate anything. So:
 If the membership contract is later redeployed to a new address, point NQG at it with `set_membership_contract`
 instead of redeploying NQG.
 
-### Tutorial: both contracts on a local network
+### Tutorial: both contracts on testnet
 
-This runs the whole flow on a local network in Docker: members are minted on the membership contract, neuron results
-are uploaded for them, and the membership contract returns their NQG scores. It uses the scripts from
-[`examples`](../../examples/README.md). You need the stellar CLI, Docker and `jq`.
+This deploys your own membership contract next to NQG on testnet, so you can mint and revoke members yourself, and runs
+the full flow against it: the Groth16 verifier, the membership contract with five members (one of them revoked) and
+NQG, then the three flow scripts from [`scripts/`](../../scripts) collect the members, prove the four neurons and
+upload the proofs, which the verifier checks. To score the members of the shared testnet membership contract instead,
+follow the Quick start in the [root README](../../README.md), which also lists what you need installed.
 
-The stellar CLI loads a `.env` from the current folder or any parent, and a `STELLAR_RPC_URL` there overrides
-`--network local`. If you keep one (for example for testnet), check with `stellar env` before starting, or the
-commands below may go to that network instead.
+Run the commands from the root of this repository, with the membership repository cloned next to it as
+`../stellar-membership` and the verifier as `../stellar-risc0-verifier` (see the root README for the commit).
 
-**1. Start the network and create identities.**
+**1. Create and fund the identities.**
 
 ```bash
-stellar container start local
-for k in nqg-admin mem-admin m0 m1 m2 m3 m4; do stellar keys generate $k --network local --fund; done
+for k in nqg-admin mem-admin m0 m1 m2 m3 m4; do stellar keys generate $k --network testnet --fund; done
 ```
 
-If a later step fails with `Account not found`, friendbot was not ready yet when the keys were generated: fund them
-again with `stellar keys fund <name> --network local`.
-
-**2. Deploy the membership contract with a placeholder NQG address**, from the membership repository after
-`stellar contract build`. `mint` needs the signature of both the new member and an operator, and `stellar contract
-invoke` only signs for the source account, so for this test the member keys are also the operators and each one mints
-its own token:
+**2. Deploy the Groth16 verifier.** It has no constructor arguments:
 
 ```bash
-MEMBERSHIP=$(stellar contract deploy --network local --source-account mem-admin \
-  --wasm target/wasm32v1-none/release/stellar_membership.wasm \
+(cd ../stellar-risc0-verifier && stellar contract build --package groth16-verifier)
+VERIFIER=$(stellar contract deploy --network testnet --source-account nqg-admin \
+  --wasm ../stellar-risc0-verifier/target/wasm32v1-none/release/groth16_verifier.wasm)
+```
+
+**3. Deploy the membership contract with a placeholder NQG address and mint the members.** `mint` needs the
+signature of both the new member and an operator, and `stellar contract invoke` only signs for the source account, so
+for this test the member keys are also the operators and each one mints its own token. The second argument of `mint`
+is the role (`3` Pilot to `0` Verified):
+
+```bash
+(cd ../stellar-membership && stellar contract build)
+MEMBERSHIP=$(stellar contract deploy --network testnet --source-account mem-admin \
+  --wasm ../stellar-membership/target/wasm32v1-none/release/stellar_membership.wasm \
   -- --admin mem-admin \
   --operators "[\"$(stellar keys address m0)\",\"$(stellar keys address m1)\",\"$(stellar keys address m2)\",\"$(stellar keys address m3)\",\"$(stellar keys address m4)\"]" \
   --name "Stellar Members" --symbol SMBR --uri https://example.com --uri_trait https://example.com \
   --nqg_contract mem-admin)
 
-for i in 0 1 2 3 4; do
-  stellar contract invoke --network local --source-account m$i --id $MEMBERSHIP -- mint \
-    --to m$i --operator m$i --role 0 \
-    --external_accounts '{"accounts":[],"email_hash":null}' --bio="test$i" --projects '[]'
-done
+mint() {
+  stellar contract invoke --network testnet --source-account $1 --id $MEMBERSHIP -- mint \
+    --to $1 --operator $1 --role $2 \
+    --external_accounts '{"accounts":[],"email_hash":null}' --bio="$1" --projects '[]'
+}
+mint m0 3; mint m1 3; mint m2 2; mint m3 1; mint m4 0
+
+stellar contract invoke --network testnet --source-account m1 --id $MEMBERSHIP \
+  -- revoke --operator m1 --token_id 0 --revoked
 ```
 
-The mints return token ids `0` to `4`, the ids used in `examples/data/voters.json`.
+The mints return token ids `0` to `4`. Token `0` is revoked, so the active members are `1` to `4`. `--revoked` is a
+bool flag: without it the call reinstates the token.
 
-**3. Configure the examples.** In `examples/`, copy `env.example` to `.env` and set:
+**4. Deploy NQG and add the layer:**
 
 ```bash
-STELLAR_PUBLIC_KEY=<output of: stellar keys address nqg-admin>
-STELLAR_SECRET_KEY=<output of: stellar keys secret nqg-admin>
-STELLAR_RPC_URL="http://localhost:8000/rpc"
-STELLAR_NETWORK_PASSPHRASE="Standalone Network ; February 2017"
-STELLAR_NETWORK="local"
-MEMBERSHIP_CONTRACT_ADDRESS=<the $MEMBERSHIP address from step 2>
+(cd contracts && stellar contract build)
+NQG=$(stellar contract deploy --network testnet --source-account nqg-admin \
+  --wasm contracts/target/wasm32v1-none/release/governance.wasm \
+  -- --admin nqg-admin --current_round 33 --membership_contract $MEMBERSHIP --verifier $VERIFIER)
+stellar contract invoke --network testnet --source-account nqg-admin --id $NQG -- add_layer \
+  --raw_neurons '[["prior-voting-history",1000000],["assigned-reputation",1000000],["trust-graph",1000000],["trust-loss",1000000]]' \
+  --layer_aggregator Sum
 ```
 
-**4. Deploy NQG and compute scores**, from `examples/`:
+**5. Configure the flow and collect.** The config goes to a separate file, so it does not replace a
+`scripts/flow.config.json` you use for the shared contract:
 
 ```bash
-./scripts/membership_check_voters.sh              # every id 0..4 must print "active"
-./scripts/governance_deploy.sh                    # deploys NQG, sets up layers, saves the address in .env
-./scripts/governance_upload_neurons_results.sh
-./scripts/governance_calculate_voting_powers.sh
-./scripts/governance_get_voting_powers.sh
+CONFIG=$(mktemp -d)/flow.tutorial.json
+sed -e "s/<NQG governance contract id>/$NQG/" \
+  -e "s/<stellar keys name of the governance admin>/nqg-admin/" \
+  scripts/flow.config.example.json > $CONFIG
+RUN=$(node scripts/collect.ts --config $CONFIG)
 ```
 
-The last script should print `113000000` (113.0) for member `0`.
+It reports 4 active members and 1 revoked, and lists the ids of `scripts/mocks/` it dropped because they are not
+active members.
 
-**5. Connect the membership contract to NQG and read a score through it.** This needs the `get_nqg` change above;
+**6. Prove** (several minutes, the trust graph most):
+
+```bash
+node scripts/prove-all.ts --run "$RUN"
+```
+
+**7. Upload and calculate:**
+
+```bash
+node scripts/upload-all.ts --run "$RUN" --config $CONFIG
+```
+
+The verifier accepts all four proofs, and the script prints the resulting voting powers, for example:
+
+```
+Voting powers, round 33:
+       1  10.183423
+       2  6.739692
+       3  4.108064
+       4  0.034075
+```
+
+**8. Connect the membership contract to NQG and read a score through it.** This needs the `get_nqg` change above;
 without it `nqg` reads `"0"`.
 
 ```bash
-source .env
-stellar contract invoke --network local --source-account mem-admin --id $MEMBERSHIP_CONTRACT_ADDRESS \
-  -- set_nqg_contract --nqg_contract $NEURAL_GOVERNANCE_ADDRESS
-stellar contract invoke --network local --source-account mem-admin --id $MEMBERSHIP_CONTRACT_ADDRESS \
-  --send=no -- governance --token_id 0
+stellar contract invoke --network testnet --source-account mem-admin --id $MEMBERSHIP \
+  -- set_nqg_contract --nqg_contract $NQG
+stellar contract invoke --network testnet --source-account mem-admin --id $MEMBERSHIP \
+  --send=no -- governance --token_id 1
 ```
 
-The result should be `{"held_until":0,"nqg":"113000000","role":0}`: 113.0 at 6 decimals.
+With the change, the result is `{"held_until":0,"nqg":"10183423","role":3}`: 10.183423 at 6 decimals.
 
-**6. Check that validation follows membership.** Revoke a member and upload again:
+**9. Check that validation follows membership.** Revoke a member and upload the same run again:
 
 ```bash
-stellar contract invoke --network local --source-account m2 --id $MEMBERSHIP_CONTRACT_ADDRESS \
+stellar contract invoke --network testnet --source-account m2 --id $MEMBERSHIP \
   -- revoke --operator m2 --token_id 2 --revoked
-./scripts/membership_check_voters.sh               # 2 is reported as revoked
-./scripts/governance_upload_neurons_results.sh     # each upload fails with Error(Contract, #18), NotAMember
+node scripts/upload-all.ts --run "$RUN" --config $CONFIG
 ```
 
-`--revoked` is a bool flag: without it the call reinstates the token, which for an active member changes nothing.
+The first upload fails with `Error(Contract, #18)`, `NotAMember`, and nothing is stored. Collecting again leaves
+member `2` out of every neuron's input.
 
-Clean up with `stellar container stop local`.
-
-`examples/scripts/e2e_testnet.sh` runs this whole flow on testnet, or locally, with a pass or fail for each check.
+The contracts stay on testnet until its next reset; nothing needs cleaning up.
 
 ### Things to know
 

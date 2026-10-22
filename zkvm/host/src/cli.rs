@@ -20,6 +20,7 @@ pub enum Neuron {
     PriorVotingHistory,
     AssignedReputation,
     TrustGraph,
+    TrustLoss,
 }
 
 #[derive(Subcommand)]
@@ -31,6 +32,9 @@ pub enum Command {
         /// Decoded journal JSON. Existing files are not overwritten.
         #[arg(long)]
         output: PathBuf,
+        /// Round to prove for. Without it, `CURRENT_ROUND` from `.env`.
+        #[arg(long)]
+        round: Option<u32>,
     },
     /// Show the identity of the compiled guest.
     ImageId,

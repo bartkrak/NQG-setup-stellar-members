@@ -2,7 +2,9 @@ use soroban_sdk::testutils::{Address as _, MockAuth, MockAuthInvoke};
 use soroban_sdk::{Address, Bytes, BytesN, Env, IntoVal, Map, String, vec};
 
 use governance::types::VotingSystemError;
-use governance::{NeuronGuest, NeuronProof, VotingSystem, VotingSystemClient};
+use governance::{
+    DECIMALS, LayerAggregator, NeuronGuest, NeuronProof, VotingSystem, VotingSystemClient,
+};
 
 use crate::e2e::common::contract_utils::deploy_contract;
 use crate::e2e::common::membership::MockMembership;
@@ -113,6 +115,7 @@ fn each_guest_is_verified_against_its_own_image_id() {
         NeuronGuest::PriorVotingHistory,
         NeuronGuest::AssignedReputation,
         NeuronGuest::TrustGraph,
+        NeuronGuest::TrustLoss,
     ];
 
     for guest in guests {
@@ -129,6 +132,56 @@ fn each_guest_is_verified_against_its_own_image_id() {
             assert_ne!(a.image_id(&env), b.image_id(&env));
         }
     }
+}
+
+#[test]
+fn trust_loss_proof_stores_negative_scores_and_reduces_voting_power() {
+    let env = Env::default();
+    let (contract_client, _admin) = deploy_contract(&env);
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    let layer = String::from_str(&env, "0");
+    let reputation = String::from_str(&env, "0");
+    let trust_loss = String::from_str(&env, "1");
+    contract_client.add_layer(
+        &vec![
+            &env,
+            (String::from_str(&env, "assigned-reputation"), DECIMALS),
+            (String::from_str(&env, "trust-loss"), DECIMALS),
+        ],
+        &LayerAggregator::Sum,
+    );
+    let journal = Bytes::from_slice(&env, b"trust loss scores");
+    let seal = Bytes::from_slice(&env, &[9]);
+    contract_client.set_neuron_result(
+        &layer,
+        &reputation,
+        &scores(&env, 1, 20 * DECIMALS),
+        &NeuronGuest::AssignedReputation,
+        &journal,
+        &seal,
+    );
+    let penalty = scores(&env, 1, -10 * DECIMALS);
+    contract_client.set_neuron_result(
+        &layer,
+        &trust_loss,
+        &penalty,
+        &NeuronGuest::TrustLoss,
+        &journal,
+        &seal,
+    );
+    assert_eq!(
+        contract_client.get_neuron_result(&layer, &trust_loss),
+        penalty
+    );
+    let proof = contract_client.get_neuron_proof(&layer, &trust_loss);
+    assert_eq!(proof.image_id, NeuronGuest::TrustLoss.image_id(&env));
+    assert_eq!(
+        verifier(&env, &contract_client).seen(),
+        Some((seal, proof.image_id, digest(&env, &journal)))
+    );
+    contract_client.calculate_voting_powers();
+    assert_eq!(contract_client.get_voting_power_for_user(&1), 10 * DECIMALS);
 }
 
 #[test]

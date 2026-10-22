@@ -15,8 +15,10 @@ fn main() {
     println!("cargo:rerun-if-changed=../core/assigned-reputation/Cargo.toml");
     println!("cargo:rerun-if-changed=../core/trust-graph/src");
     println!("cargo:rerun-if-changed=../core/trust-graph/Cargo.toml");
+    println!("cargo:rerun-if-changed=../core/trust-loss/src");
+    println!("cargo:rerun-if-changed=../core/trust-loss/Cargo.toml");
     println!("cargo:rerun-if-env-changed=RISC0_DOCKER_CONTAINER_TAG");
-    
+
     let manifest_dir = PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must set CARGO_MANIFEST_DIR"),
     );
@@ -33,6 +35,7 @@ fn main() {
     embed_methods_with_options(HashMap::from([
         ("prior_voting_history_guest", opts.clone()),
         ("assigned_reputation_guest", opts.clone()),
-        ("trust_graph_guest", opts),
+        ("trust_graph_guest", opts.clone()),
+        ("trust_loss_guest", opts),
     ]));
 }

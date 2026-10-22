@@ -1,0 +1,17 @@
+{
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "governance": "<NQG governance contract id>",
+  "source": "<stellar keys name of the governance admin>",
+  "votingHistory": {
+    "tansuContract": "CBXKUSLQPVF35FYURR5C42BPYA5UOVDXX2ELKIM2CAJMCI6HXG2BHGZA",
+    "parentProjectKey": "a412d8522d6a5c27284e8af9b1d2f4262645b4f3532e6bf8dcbbefb5cd094a80",
+    "explorerUrl": "https://api.stellar.expert/explorer/testnet"
+  },
+  "neurons": {
+    "prior-voting-history": { "layerId": "0", "neuronId": "0" },
+    "assigned-reputation": { "layerId": "0", "neuronId": "1" },
+    "trust-graph": { "layerId": "0", "neuronId": "2" },
+    "trust-loss": { "layerId": "0", "neuronId": "3" }
+  }
+}

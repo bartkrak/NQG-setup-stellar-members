@@ -1159,6 +1159,7 @@ dependencies = [
  "serde",
  "serde_json",
  "trust-graph-core",
+ "trust-loss-core",
 ]
 
 [[package]]
@@ -2629,6 +2630,15 @@ dependencies = [
 
 [[package]]
 name = "trust-graph-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "trust-loss-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",

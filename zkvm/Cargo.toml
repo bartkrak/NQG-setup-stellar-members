@@ -6,6 +6,7 @@ members = [
     "core/prior-voting-history",
     "core/assigned-reputation",
     "core/trust-graph",
+    "core/trust-loss",
 ]
 default-members = ["host"]
 
