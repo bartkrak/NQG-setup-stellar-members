@@ -4,7 +4,7 @@ mod journal;
 mod proof;
 mod seal;
 
-use anyhow::{bail, Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command, Neuron};
 use risc0_zkvm::{sha::Digest, Receipt};
@@ -25,26 +25,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn current_round() -> Result<u32> {
-    let entries =
-        dotenvy::dotenv_iter().context("No .env file in the working directory or its parents")?;
-    for entry in entries {
-        let (key, value) = entry.context("Invalid .env file")?;
-        if key == "CURRENT_ROUND" {
-            return value
-                .trim()
-                .parse()
-                .with_context(|| format!("CURRENT_ROUND must be a u32, got {value:?}"));
-        }
-    }
-    bail!("CURRENT_ROUND is not set in the .env file")
-}
-
-fn prove(neuron: Neuron, input: &Path, output: &Path, round: Option<u32>) -> Result<()> {
-    let current_round = match round {
-        Some(round) => round,
-        None => current_round()?,
-    };
+fn prove(neuron: Neuron, input: &Path, output: &Path, current_round: u32) -> Result<()> {
     let start = Instant::now();
     let proven = neuron.prove(current_round, input)?;
     let proof = seal::on_chain_proof(&proven)?;

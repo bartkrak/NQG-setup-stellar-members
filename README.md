@@ -3,128 +3,49 @@
 This repository computes neuron scores for Stellar Community Fund members,
 proves with [RISC Zero](https://risczero.com/) that the scores were computed
 correctly, and stores them on Stellar together with the proof, in the Neural
-Quorum Governance (NQG) contract that turns them into voting powers. The
-private input never leaves the machine that generates the proof. Only the
-scores and the proof are published.
+Quorum Governance (NQG) contract that turns them into voting powers.
+
+Each neuron calculates one part of a member's score, such as reputation or
+voting participation. NQG combines these scores into voting power.
 
 The repository has these parts:
 
 | Part | Path | What it does |
 | --- | --- | --- |
 | Prover | [`zkvm/`](zkvm) | Runs a neuron inside the RISC Zero zkVM and produces a Groth16 proof plus one output JSON file |
-| Flow scripts | [`scripts/`](scripts) | `collect.ts` reads the members from chain and writes every neuron's input, `prove-all.ts` proves all neurons, `upload-all.ts` sends the proofs and calculates the voting powers |
-| Submit script | [`scripts/submit-neuron.ts`](scripts/submit-neuron.ts) | Sends one output JSON, scores and proof, to the contract |
+| Flow scripts | [`scripts/`](scripts) | `collect.ts` reads all data needed by the neurons and writes each neuron's input, `prove-all.ts` proves all neurons, `upload-all.ts` sends the proofs and calculates the voting powers |
 | Contract | [`contracts/governance/`](contracts/governance) | The NQG contract. Checks the proof with the Groth16 verifier, stores the scores per layer, neuron and round, and computes the voting powers |
 
-The proof is checked on chain by the Groth16 verifier contract from
-[NethermindEth/stellar-risc0-verifier](https://github.com/NethermindEth/stellar-risc0-verifier).
-This repository does not contain that contract. It is deployed once per
-network and the NQG contract calls it.
+NQG uses two other contracts: Stellar Membership to check that members are
+active, and the [Groth16 verifier](https://github.com/NethermindEth/stellar-risc0-verifier)
+to check proofs. The setup below uses an existing Membership contract on
+testnet and deploys the verifier.
 
-The NQG contract also requires every scored id to be an active member of the
-Stellar Membership contract, which lives in a separate repository. The
-contract's own README, [`contracts/governance/README.md`](contracts/governance/README.md),
-covers its whole interface, the error codes and the link to the membership
-contract.
+See the [contract README](contracts/governance/README.md) for its interface,
+error codes and membership integration.
 
 
 ## Contents
 
-- [Quick start (testnet)](#quick-start-testnet)
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
-- [Set up the contracts](#set-up-the-contracts)
-- [Run the full flow](#run-the-full-flow)
+- [Run the full flow (testnet)](#run-the-full-flow)
+  - [1. Build the prover and install dependencies](#1-build-the-prover-and-install-dependencies)
+  - [2. Create the admin identity](#2-create-the-admin-identity)
+  - [3. Set up the contracts](#3-set-up-the-contracts)
+  - [4. Configure the scripts](#4-configure-the-scripts)
+  - [5. Collect inputs](#5-collect-inputs)
+  - [6. Prove the neurons](#6-prove-the-neurons)
+  - [7. Upload the proofs and calculate voting powers](#7-upload-the-proofs-and-calculate-voting-powers)
+  - [8. Read the results](#8-read-the-results)
+  - [Next round](#next-round)
+  - [Mocked data](#mocked-data)
 - [The zkVM prover](#the-zkvm-prover)
-- [Build the prover](#build-the-prover)
-- [Generate a proof](#generate-a-proof)
-- [Submit the scores](#submit-the-scores)
-- [Calculate the voting powers](#calculate-the-voting-powers)
-- [Read the results](#read-the-results)
+  - [Prover commands](#prover-commands)
+  - [Image IDs](#image-ids)
 - [The contract](#the-contract)
 - [What is proven and what is trusted](#what-is-proven-and-what-is-trusted)
 - [After changing a neuron](#after-changing-a-neuron)
-
-
-## Quick start (testnet)
-
-One round on testnet: read the members of the Stellar Membership testnet
-contract, prove the four neurons on your machine, and store the scores, the
-proofs and the voting powers in an NQG contract.
-
-You need, as described in [Requirements](#requirements): Rust with the
-`wasm32v1-none` target, `r0vm` 3.0.6, Docker with 8 GiB of memory (Colima on
-Apple Silicon), the Stellar CLI and Node.js 22.18 or newer. Run everything from
-the repository root.
-
-1. Build the prover, with Docker running, and install the script dependencies:
-
-   ```sh
-   cargo build --release --locked --manifest-path zkvm/Cargo.toml -p host
-   npm ci --prefix scripts
-   ```
-
-2. Create and fund a testnet identity for the NQG admin:
-
-   ```sh
-   stellar keys generate admin --network testnet --fund
-   ```
-
-3. Deploy the Groth16 verifier and the NQG contract, and add the neuron layer.
-   If your team already has an NQG contract on testnet and you hold its admin
-   key, set `NQG` to its id.
-
-   ```sh
-   git clone https://github.com/NethermindEth/stellar-risc0-verifier.git ../stellar-risc0-verifier
-   git -C ../stellar-risc0-verifier checkout e8ff6ea202db195352c0141ecc533ff649393fe4
-   (cd ../stellar-risc0-verifier && stellar contract build --package groth16-verifier)
-   VERIFIER=$(stellar contract deploy --network testnet --source admin \
-     --wasm ../stellar-risc0-verifier/target/wasm32v1-none/release/groth16_verifier.wasm)
-
-   (cd contracts && stellar contract build)
-   NQG=$(stellar contract deploy --network testnet --source admin \
-     --wasm contracts/target/wasm32v1-none/release/governance.wasm \
-     -- --admin admin --current_round 33 \
-     --membership_contract CBIQGYBF2LPQD4W7Z3DOUUY7RBPKP3OHUOLQ6MASI7GYTBOPQPV62T7X \
-     --verifier $VERIFIER)
-   stellar contract invoke --network testnet --source admin --id $NQG -- add_layer \
-     --raw_neurons '[["prior-voting-history",1000000],["assigned-reputation",1000000],["trust-graph",1000000],["trust-loss",1000000]]' \
-     --layer_aggregator Sum
-   ```
-
-4. Point the scripts at the contract and the admin identity:
-
-   ```sh
-   sed -e "s/<NQG governance contract id>/$NQG/" \
-     -e "s/<stellar keys name of the governance admin>/admin/" \
-     scripts/flow.config.example.json > scripts/flow.config.json
-   ```
-
-5. Run the round:
-
-   ```sh
-   RUN=$(node scripts/collect.ts)            # members from chain plus mocked data, into runs/r33-<time>/
-   node scripts/prove-all.ts --run "$RUN"    # four Groth16 proofs
-   node scripts/upload-all.ts --run "$RUN"   # four uploads, calculate_voting_powers, prints the powers
-   ```
-
-The last command ends with every active member's voting power, for example:
-
-```
-Voting powers, round 33:
-       1  10.183423
-       2  7.938100
-       3  4.370918
-       ...
-```
-
-Proving time depends on the members and the machine, with the trust graph
-being the most expensive existing neuron. Members, their roles and voting
-history come from chain. Discord roles, trust relationships and the NQG sums
-used by trust loss are synthetic data from
-[`scripts/mocks/`](scripts/mocks), see [Mocked data](#mocked-data). The
-sections [Set up the contracts](#set-up-the-contracts) and
-[Run the full flow](#run-the-full-flow) explain each step.
 
 
 ## How it works
@@ -141,40 +62,28 @@ flowchart LR
     contract -->|verify| verifier["Groth16 verifier<br/>contract"]
 ```
 
-1. `collect.ts` asks the NQG contract for its active round and for the
-   membership contract it validates against, reads the active members and
-   their roles from that contract, collects project voting history from
-   Tansu, and writes one private input file per neuron. Discord roles and
-   trust relationships, trust history and NQG sums for trust loss come from
-   the mocked data.
-2. `prove-all.ts` runs `host prove` for each neuron. The zkVM runs the neuron
-   as a guest program on the private input. The guest calculates the scores
-   and commits the round and the scores as its public output, the journal. The
-   prover wraps the run in a Groth16 proof and writes one output JSON file.
-3. `upload-all.ts` scales every score to an integer with 6 decimal places and
-   calls `set_neuron_result` on the NQG contract for each neuron.
-4. The contract checks that the caller is the admin and that every scored id
-   is an active member, hashes the journal, and asks the Groth16 verifier
-   whether the proof matches the journal and the neuron's Image ID. Only when
-   all checks pass does it store the scores and the proof under that layer,
-   neuron and round. A failed check stores nothing.
-5. `upload-all.ts` then calls `calculate_voting_powers`, and the contract
-   weighs and adds up the scores into each member's voting power.
 
-The private input stays on the machine that proves. To prove or submit a
-single neuron by hand, see [Generate a proof](#generate-a-proof) and
-[Submit the scores](#submit-the-scores).
+1. `collect.ts` gathers member data and voting history, combines it with the
+   [mocked data](#mocked-data), and writes an input file for each neuron.
+2. `prove-all.ts` runs all four neurons locally. Each produces scores and a
+   proof that they were calculated correctly.
+3. `upload-all.ts` submits the scores and proofs. The NQG contract checks
+   membership and verifies the proofs, then calculates each member's voting
+   power.
+
+The private inputs stay on your machine. Follow [Run the full flow](#run-the-full-flow)
+to run all four neurons, or [Generate a proof for one neuron](#generate-a-proof-for-one-neuron)
+to prove one separately.
 
 
 ## Requirements
 
-For proving:
+### Proving tools
 
 - [Rust](https://rustup.rs/). `zkvm/` uses the stable toolchain from
   [`zkvm/rust-toolchain.toml`](zkvm/rust-toolchain.toml).
 - [`rzup`](https://github.com/risc0/risc0/blob/main/risc0/cargo-risczero/README.md)
-  and `r0vm` 3.0.6. The host calls this binary to prove locally. No remote
-  prover is used.
+  and `r0vm` 3.0.6 for generating proofs locally:
 
   ```sh
   curl -L https://risczero.com/install | bash
@@ -182,121 +91,136 @@ For proving:
   rzup use r0vm 3.0.6
   ```
 
-- Docker with BuildKit support. Choose the path for your setup:
+### Docker setup
 
-  **Path 1: You already have Docker Desktop**
+Use Docker Desktop or Colima with BuildKit support.
 
-  Start Docker Desktop. It includes Buildx and BuildKit, so no separate
-  Docker or Buildx installation is needed. Continue to the verification
-  commands below.
+#### Docker Desktop
 
-  **Path 2: You do not have Docker Desktop (Apple Silicon Mac)**
+Start Docker Desktop and give it at least 8 GiB of memory. Buildx and
+BuildKit are included. Continue to [Check Docker](#check-docker).
 
-  Install Colima, the Docker CLI and Buildx with
-  [Homebrew](https://formulae.brew.sh/formula/docker-buildx):
+#### Colima on Apple Silicon
 
-  ```sh
-  brew install colima docker docker-buildx
-  mkdir -p "$HOME/.docker/cli-plugins"
-  ln -sfn "$(brew --prefix)/opt/docker-buildx/bin/docker-buildx" \
-    "$HOME/.docker/cli-plugins/docker-buildx"
-  ```
+Install Colima, the Docker CLI and Buildx with
+[Homebrew](https://formulae.brew.sh/formula/docker-buildx):
 
-  If you already use Colima, install only missing packages. The symlink
-  makes the Homebrew plugin discoverable by Docker, as described in the
-  [Colima setup instructions](https://github.com/abiosoft/colima/blob/main/docs/FAQ.md#docker-buildx-plugin-is-missing).
+```sh
+brew install colima docker docker-buildx
+mkdir -p "$HOME/.docker/cli-plugins"
+ln -sfn "$(brew --prefix)/opt/docker-buildx/bin/docker-buildx" \
+  "$HOME/.docker/cli-plugins/docker-buildx"
+```
 
-  Give the virtual machine 8 GiB of memory; with the default 2 GiB the
-  Groth16 container is killed. Enable Rosetta because the guest builder
-  exists only for `linux/amd64`, and QEMU emulation is much slower:
+If you already use Colima, install only missing packages. The symlink
+makes the Homebrew plugin discoverable by Docker, as described in the
+[Colima setup instructions](https://github.com/abiosoft/colima/blob/main/docs/FAQ.md#docker-buildx-plugin-is-missing).
 
-  ```sh
-  colima start --vm-type vz --vz-rosetta --memory 8 --cpu 4
-  ```
+Give the virtual machine 8 GiB of memory; with the default 2 GiB the
+Groth16 container is killed. Enable Rosetta because the guest builder
+exists only for `linux/amd64`, and QEMU emulation is much slower:
 
-  If Colima is already running, run `colima stop` before applying these
-  settings. Later `colima start` calls keep them. If the existing virtual
-  machine uses QEMU and refuses these settings, recreate it with
-  `colima delete` and run the start command again. This deletes the images
-  and containers stored in Colima.
+```sh
+colima start --vm-type vz --vz-rosetta --memory 8 --cpu 4
+```
 
-  **Verify either path**
+If Colima is already running, run `colima stop` before applying these
+settings. Later `colima start` calls keep them. If the existing virtual
+machine uses QEMU and refuses these settings, recreate it with
+`colima delete` and run the start command again. This deletes the images
+and containers stored in Colima.
 
-  After starting Docker Desktop or Colima, verify the plugin and the
-  connection to Docker:
+#### Check Docker
 
-  ```sh
-  docker buildx version
-  docker info
-  ```
+After starting Docker Desktop or Colima, verify the plugin and the
+connection to Docker:
 
-  Docker is used twice. Building the prover compiles the guests in
-  `risczero/risc0-guest-builder:r0.1.91.1`, pinned by SHA-256 digest in
-  [`zkvm/methods/build.rs`](zkvm/methods/build.rs). Proving runs
-  `risczero/risc0-groth16-prover:v2025-04-03.1`, which `r0vm` starts to turn
-  the proof into Groth16.
+```sh
+docker buildx version
+docker info
+```
 
-For the contracts, collecting and submitting:
+### Contract and script tools
 
 - [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/install-cli).
-  It loads a `.env` from the current folder or any parent, and a
-  `STELLAR_RPC_URL` or `STELLAR_NETWORK_PASSPHRASE` there overrides
-  `--network`. `stellar env` shows what it picked up. The flow scripts are not
-  affected: they pass the network from their config.
+  Used to build and deploy the contracts, read contract data and submit
+  transactions.
 - The `wasm32v1-none` Rust target, to build the contracts:
 
   ```sh
   rustup target add wasm32v1-none
   ```
 
-- Node.js 22.18 or newer. The scripts are TypeScript that Node runs directly,
-  without a build step. `collect.ts` reads ledger entries with
-  `@stellar/stellar-sdk`, so install the dependencies once:
-
-  ```sh
-  npm ci --prefix scripts
-  ```
+- Node.js 22.18 or newer. Node runs the TypeScript scripts directly.
+  Their dependencies are installed in
+  [step 1 of the full flow](#1-build-the-prover-and-install-dependencies).
 
 
-## Set up the contracts
+## Run the full flow
 
-Once per network. The NQG contract needs the address of a Groth16 verifier
-and of the Stellar Membership contract at deploy time. The commands use
-testnet and a Stellar CLI identity named `admin`, which becomes the NQG admin:
-only it can upload scores and calculate voting powers.
+Follow these steps to collect data, generate proofs for all four neurons,
+and save the scores and voting powers on testnet.
 
-1. The verifier. Build `groth16-verifier` from
-   [NethermindEth/stellar-risc0-verifier](https://github.com/NethermindEth/stellar-risc0-verifier)
-   and deploy it. It takes no constructor arguments. Nethermind publishes no
-   deployment, so each network needs its own. Commit `e8ff6ea` is the one
-   tested with this prover; a verifier for another RISC Zero version can
-   reject its proofs.
+Install the tools in [Requirements](#requirements), then run the commands
+from the repository root.
+
+The examples use round `8`.
+
+Each run is saved in `runs/r<round>-<time>/`, for example `runs/r8-<time>/`:
+
+| Order | Script | Reads | Writes to the run folder |
+| --- | --- | --- | --- |
+| 1 | `collect.ts` | NQG and membership contracts, Tansu, Stellar Expert, [`scripts/mocks/`](scripts/mocks) | `snapshot.json`, `inputs/<neuron>.json` |
+| 2 | `prove-all.ts` | `inputs/` | `proofs/<neuron>.json` |
+| 3 | `upload-all.ts` | `proofs/` | `submitted.json`; on chain the four results and the voting powers |
+
+### 1. Build the prover and install dependencies
+
+Start Docker, then build the prover and install the script dependencies:
+
+```sh
+cargo build --release --locked --manifest-path zkvm/Cargo.toml -p host
+npm ci --prefix scripts
+```
+
+The first build can take several minutes. Later builds reuse Docker's cache.
+The prover is saved as `zkvm/target/release/host`.
+
+### 2. Create the admin identity
+
+Create and fund a testnet identity for the NQG admin:
+
+```sh
+stellar keys generate admin --network testnet --fund
+```
+
+### 3. Set up the contracts
+
+Deploy the verifier, deploy NQG, and add its four neurons. Only the NQG
+admin can upload scores and calculate voting powers.
+
+1. Build and deploy the [Groth16 verifier](https://github.com/NethermindEth/stellar-risc0-verifier):
 
    ```sh
    git clone https://github.com/NethermindEth/stellar-risc0-verifier.git ../stellar-risc0-verifier
-   git -C ../stellar-risc0-verifier checkout e8ff6ea202db195352c0141ecc533ff649393fe4
    (cd ../stellar-risc0-verifier && stellar contract build --package groth16-verifier)
    VERIFIER=$(stellar contract deploy --network testnet --source admin \
      --wasm ../stellar-risc0-verifier/target/wasm32v1-none/release/groth16_verifier.wasm)
    ```
 
-2. The NQG contract, built from this repository. `--current_round` is the
-   round being scored, at least 8 for prior voting history.
-   `--membership_contract` is the Stellar Membership deployment; on testnet
-   `CBIQGYBF2LPQD4W7Z3DOUUY7RBPKP3OHUOLQ6MASI7GYTBOPQPV62T7X`, recorded in
-   `contracts/deployments/stellar-membership-testnet` of the membership
-   repository.
+2. Build and deploy NQG. This command uses the verifier deployed above and
+   the shared Stellar Membership testnet contract:
 
    ```sh
    (cd contracts && stellar contract build)
    NQG=$(stellar contract deploy --network testnet --source admin \
      --wasm contracts/target/wasm32v1-none/release/governance.wasm \
-     -- --admin admin --current_round 33 \
+     -- --admin admin --current_round 8 \
      --membership_contract CBIQGYBF2LPQD4W7Z3DOUUY7RBPKP3OHUOLQ6MASI7GYTBOPQPV62T7X \
      --verifier $VERIFIER)
    ```
 
-3. One layer with the four neurons, each with weight 1.0, summed:
+3. Add one layer with four neurons, each with weight 1.0, summed:
 
    ```sh
    stellar contract invoke --network testnet --source admin --id $NQG -- add_layer \
@@ -304,110 +228,110 @@ only it can upload scores and calculate voting powers.
      --layer_aggregator Sum
    ```
 
-   On a new contract the layer gets id `0` and the neurons ids `0`, `1`, `2`
-   and `3`, in this order.
-   Name the neurons exactly like this: `upload-all.ts`
-   refuses to send a neuron's scores to a neuron with another name.
+   This creates layer `0` with neuron ids `0`, `1`, `2` and `3`. Keep the
+   names and order shown above to match the example configuration.
 
-For the next round, `set_current_round --round <round>` moves the contract on.
-Results of earlier rounds stay stored.
+### 4. Configure the scripts
 
-
-## Run the full flow
-
-Three scripts run one round end to end. They hand over through a run folder,
-`runs/r<round>-<time>/`, which is in `.gitignore` because it holds the private
-input:
-
-| Step | Script | Reads | Writes to the run folder |
-| --- | --- | --- | --- |
-| 1 | `collect.ts` | NQG and membership contracts, Tansu, Stellar Expert, [`scripts/mocks/`](scripts/mocks) | `snapshot.json`, `inputs/<neuron>.json` |
-| 2 | `prove-all.ts` | `inputs/` | `proofs/<neuron>.json` |
-| 3 | `upload-all.ts` | `proofs/` | `submitted.json`; on chain the four results and the voting powers |
-
-Requirements: the prover built and Docker running (see
-[Build the prover](#build-the-prover)), the contracts set up as above, and
-the script dependencies installed.
-
-### Configure
-
-```sh
-cp scripts/flow.config.example.json scripts/flow.config.json
-```
-
-Set `governance` and `source`, and check the `votingHistory` settings for your
-network and parent project. The example points at testnet.
+Create or update `scripts/flow.config.json` using
+[`scripts/flow.config.example.json`](scripts/flow.config.example.json) as a
+reference. Set `governance` to your deployed NQG contract id and `source`
+to `admin`. Check the network, neuron ids and voting-history settings.
+The example file is configured for testnet.
 
 | Field | What it is |
 | --- | --- |
-| `rpcUrl`, `networkPassphrase` | The network. Every script passes both to the Stellar CLI, so a `STELLAR_RPC_URL` in `.env` cannot redirect them |
+| `rpcUrl`, `networkPassphrase` | Stellar network RPC URL and passphrase |
 | `governance` | The NQG contract id |
-| `source` | Stellar CLI identity of the NQG admin, used to simulate reads and sign uploads |
+| `source` | Stellar CLI identity of the NQG admin |
 | `votingHistory.tansuContract` | Tansu contract id containing the projects and proposals |
 | `votingHistory.parentProjectKey` | Parent project key whose child projects supply voting history |
 | `votingHistory.explorerUrl` | Stellar Expert API base URL for the same network, used to read project registrations and membership transfers |
-| `neurons` | Layer and neuron id of each neuron in the NQG contract |
+| `neurons` | Layer and neuron ids; keep the defaults for the setup above |
 
-`scripts/flow.config.json` is in `.gitignore`. Every script takes
-`--config <path>` to use another file.
+`scripts/flow.config.json` is in `.gitignore`. `collect.ts` and `upload-all.ts`
+take `--config <path>` to use another file. `prove-all.ts` reads the run's
+snapshot and takes the round from it.
 
-### 1. Collect
+### 5. Collect inputs
 
 ```sh
 RUN=$(node scripts/collect.ts)
 ```
 
-The script asks the NQG contract for its active round and for the membership
-contract it validates against, reads every minted token from that membership
-contract, and keeps the active ones. Their ids are the users of all four
-neurons, since `calculate_voting_powers` needs every neuron to score the same
-members. Voting history comes from the configured Tansu child projects,
-numbered from 1 in registration order. Membership transfer events connect
-past and current voting addresses to the same member id.
+This gathers member data and voting history, adds the
+[mocked data](#mocked-data), and writes the four input files. The run folder
+is saved in `$RUN`. Use `--out <dir>` to choose another output folder.
 
-The script combines these reads with the mocked Discord roles, current
-trust graph, historical trust lists and NQG sums for trust loss, writes each
-neuron's input, and prints the run folder. `--out <dir>`
-picks the folder.
-
-### 2. Prove
+### 6. Prove the neurons
 
 ```sh
 node scripts/prove-all.ts --run "$RUN"
 ```
 
-Before proving, the script compares all four of the prover's Image IDs with
-the constants in [`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs)
-and stops if they differ, because the contract would reject the proofs. It
-then runs `host prove --round <round>` for each neuron, one after another, and
-checks that every proof is for the run's round and scores exactly the run's
-users with finite numbers. A neuron that already has a proof is skipped, so
-after a failure the same command continues. `RISC0_WORK_DIR` defaults to
-`~/.risc0/groth16-work`.
+This generates one proof per neuron. Proving can take several minutes;
+trust graph takes the longest. Existing proofs are checked and skipped,
+so you can run the same command again to continue after a failure.
 
-The Groth16 step needs nearly all of Docker's 8 GiB. Stop other containers
-while proving: when memory runs out, the Groth16 container is killed and
-Docker returns exit code 137.
+Keep Docker running with at least 8 GiB of available memory. Stop other
+containers if needed. Exit code `137` indicates that the proving container
+ran out of memory.
 
-Proving time grows with the number of members, the trust graph fastest: its
-PageRank runs 1000 iterations over every pair of member and trust list. For
-the 13 testnet members, on an Apple Silicon Mac with Colima (4 CPUs, 8 GiB),
-prior voting history took 6 minutes, assigned reputation under 1 and the trust
-graph 48.
-
-### 3. Upload
+### 7. Upload the proofs and calculate voting powers
 
 ```sh
 node scripts/upload-all.ts --run "$RUN"
 ```
 
-Nothing is sent until these simulated checks pass: the contract's active
-round is the run's round, it still validates against the membership contract
-the run read, every neuron in the contract is in the config, and each neuron
-has the expected name. The script then calls `set_neuron_result` for the four
-neurons, `calculate_voting_powers`, and prints the voting powers. Each step is
-recorded in `submitted.json`. Running it again sends everything again, which
-replaces the stored results.
+This checks the run, uploads the four proofs and scores, calculates voting
+powers, and prints the results. It uses the admin identity from your config
+and pays transaction fees. A record of the uploads and voting powers is
+saved in `$RUN/submitted.json`.
+
+```
+Voting powers, round 8:
+       1  10.183423
+       2  7.938100
+       3  4.370918
+       ...
+```
+
+Each upload is a separate transaction. If a later upload fails, earlier
+successful uploads remain stored. Running the command again replaces the
+results for this run's round.
+
+For the validation rules and manual recalculation command, see
+[Upload checks and recalculation](#upload-checks-and-recalculation).
+
+### 8. Read the results
+
+Anyone can read the stored data. `--send=no` simulates the call and does not
+create a transaction or cost a fee. The CLI still needs a `--source` account
+that exists on the network, but it can be any account, not only `admin`.
+
+```sh
+stellar contract invoke --send=no --network testnet --source admin --id "$NQG" \
+  -- get_voting_powers
+```
+
+This returns the map from member id to voting power for the active round,
+with 6 decimals, for example `{"1":10183423,"2":7938100,"3":4370918,...}`.
+`get_voting_power_for_user --member_id 1` returns one member's.
+
+See [Inspect neuron results and proofs](#inspect-neuron-results-and-proofs)
+for individual neuron scores and proof details.
+
+### Next round
+
+To start another round, set its number on the NQG contract, then repeat
+steps 5–8. For example, to run round 9:
+
+```sh
+stellar contract invoke --network testnet --source admin --id "$NQG" \
+  -- set_current_round --round 9
+```
+
+Changing the active round does not delete the previous round's data.
 
 ### Mocked data
 
@@ -444,33 +368,85 @@ The implementation is split into:
 - [`zkvm/methods/`](zkvm/methods): one guest program per neuron. Each reads the
   round and private input, calculates scores, and commits the output journal.
   The build embeds each compiled guest and its Image ID into the host.
-- [`zkvm/host/`](zkvm/host): reads the input JSON and the round (`--round`
-  or `.env`), calls local `r0vm` with Groth16 proving enabled and development
+- [`zkvm/host/`](zkvm/host): reads the input JSON and the required `--round`
+  argument, calls local `r0vm` with Groth16 proving enabled and development
   mode disabled, then decodes the journal and writes the submission file.
 
+### Prover commands
 
-## Build the prover
-
-Start Docker first: the build compiles the guests inside the guest builder
-image and fails if Docker is not running.
-
-```sh
-cargo build --release --locked --manifest-path zkvm/Cargo.toml -p host
-```
-
-The first build downloads the guest builder image and might take
-several minutes. Later builds reuse Docker's cache.
-
-The binary is `zkvm/target/release/host`. It has two commands:
+The binary is `zkvm/target/release/host`, with two commands:
 
 | Command | What it does |
 | --- | --- |
 | `host image-id --neuron <neuron>` | Prints the Image ID of the guest compiled into this binary |
-| `host prove --neuron <neuron> --input <json> --output <json> [--round <round>]` | Generates a proof |
+| `host prove --neuron <neuron> --input <json> --output <json> --round <round>` | Generates a proof |
 
 `<neuron>` is `prior-voting-history`, `assigned-reputation`, `trust-graph`
 or `trust-loss`.
 If `--neuron` is left out, `prior-voting-history` is used, so always pass it.
+
+To prove one neuron locally, [build the prover](#1-build-the-prover-and-install-dependencies)
+and start Docker. No contract deployment is needed.
+
+On macOS, first set a work directory Docker can access in the same terminal
+(`prove-all.ts` does this automatically):
+
+```sh
+mkdir -p "$HOME/.risc0/groth16-work"
+export RISC0_WORK_DIR="$HOME/.risc0/groth16-work"
+```
+
+For example, to prove assigned reputation:
+
+```sh
+mkdir -p zkvm/artifacts
+zkvm/target/release/host prove --neuron assigned-reputation \
+  --input zkvm/data/example_assigned_reputation.json \
+  --output zkvm/artifacts/assigned-reputation-8.json \
+  --round 8
+```
+
+Use the neuron names and example inputs from the table above to prove a
+different neuron. Those inputs are synthetic. Choose a new output filename:
+existing files are never overwritten, and the path is checked after proving.
+The parent directory must already exist.
+
+For a [collected run](#5-collect-inputs), use `--input "$RUN/inputs/<neuron>.json"`,
+`--output "$RUN/proofs/<neuron>.json"` and the round from `snapshot.json`.
+Create `$RUN/proofs` first if needed. Uploaded scores must belong to active
+members of the configured Membership contract. `prove-all.ts` validates and
+skips existing proofs; `upload-all.ts` still requires all four.
+
+#### Output file
+
+Keep the JSON file written to `--output`: it contains the scores and proof
+needed for upload.
+
+```json
+{
+  "currentRound": 8,
+  "scores": {
+    "0": 1.5,
+    "1": 2.25
+  },
+  "journal": "<hex>",
+  "seal": "<hex>",
+  "imageId": "<64 hex characters>"
+}
+```
+
+| Field | What it is |
+| --- | --- |
+| `currentRound` | The round from `--round`, as proven in the journal |
+| `scores` | Person (membership token) id to score, decoded from the journal |
+| `journal` | Public output containing the round and scores, encoded as hex |
+| `seal` | Groth16 proof with the 4-byte selector, hex |
+| `imageId` | Image ID of the guest that produced the proof |
+
+### Image IDs
+
+An Image ID identifies a compiled neuron program. The contract uses it to
+check which program produced a proof.
 
 Print the four Image IDs to compare them with the guest IDs expected by
 the existing NQG contract:
@@ -486,233 +462,44 @@ Because the guests are compiled in a pinned Docker image, the same commit gives
 the same Image IDs on every machine and in every folder. Anyone can check the
 Image IDs in the contract by building that commit and running these commands.
 
-## Generate a proof
+### Data collection
 
-### 1. Set the round
+`collect.ts` asks the NQG contract for its active round and Membership
+contract, reads every minted token from that Membership
+contract, and keeps the active ones. Their ids are the users of all four
+neurons, since `calculate_voting_powers` needs every neuron to score the same
+members. Voting history comes from the configured Tansu child projects,
+numbered from 1 in registration order. Membership transfer events connect
+past and current voting addresses to the same member id.
 
-The round is not part of the input file. Pass it with `--round 33`, or put it
-in a `.env` file in the working directory or one of its parents, which
-`host prove` reads when `--round` is missing. A shell variable named
-`CURRENT_ROUND` is ignored.
+The collected data is combined with the mocked Discord roles, current
+trust graph, historical trust lists and NQG sums for trust loss. Each
+neuron's input is saved in the run folder.
 
-```sh
-echo "CURRENT_ROUND=33" > .env
-```
+### Proof validation
 
-This replaces the whole file. If `.env` holds other settings, edit the
-`CURRENT_ROUND` line instead. `.env` is in `.gitignore`.
+Before proving, `prove-all.ts` compares all four of the prover's Image IDs with
+the constants in [`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs)
+and stops if they differ, because the contract would reject the proofs. It
+then runs `host prove --round <round>` for each neuron, one after another, and
+checks that every proof is for the run's round and scores exactly the run's
+users with finite numbers. A neuron that already has a proof is skipped, so
+after a failure the same command continues. `RISC0_WORK_DIR` defaults to
+`~/.risc0/groth16-work`.
 
-### 2. Point RISC Zero at a work directory Docker can see
+### Proving time
 
-On macOS the default work directory is under `/var/folders`, which Colima does
-not mount, so the Groth16 container would see no files. Run this in the same
-terminal as `host prove` (`prove-all.ts` sets it itself):
+Proving time grows with the number of members, the trust graph fastest: its
+PageRank runs 1000 iterations over every pair of member and trust list. For
+the 13 testnet members, on an Apple Silicon Mac with Colima (4 CPUs, 8 GiB),
+prior voting history took 6 minutes, assigned reputation under 1 and the trust
+graph 48.
 
-```sh
-mkdir -p "$HOME/.risc0/groth16-work"
-export RISC0_WORK_DIR="$HOME/.risc0/groth16-work"
-```
+### Build details
 
-### 3. Prove
-
-Docker must be running. Create the output directory once:
-
-```sh
-mkdir -p zkvm/artifacts
-```
-
-Assigned reputation, the faster example:
-
-```sh
-zkvm/target/release/host prove --neuron assigned-reputation \
-  --input zkvm/data/example_assigned_reputation.json \
-  --output zkvm/artifacts/assigned-reputation-33.json
-```
-
-Prior voting history:
-
-```sh
-zkvm/target/release/host prove --neuron prior-voting-history \
-  --input zkvm/data/example_prior_voting_history.json \
-  --output zkvm/artifacts/prior-voting-history-33.json
-```
-
-Trust graph:
-
-```sh
-zkvm/target/release/host prove --neuron trust-graph \
-  --input zkvm/data/example_trust_graph.json \
-  --output zkvm/artifacts/trust-graph-33.json
-```
-
-Trust loss:
-
-```sh
-zkvm/target/release/host prove --neuron trust-loss \
-  --input zkvm/data/example_trust_loss.json \
-  --output zkvm/artifacts/trust-loss-33.json \
-  --round 33
-```
-
-The files in `zkvm/data/` are synthetic, and their ids are not members of the
-testnet membership contract, so the contract would refuse their scores with
-`NotAMember`. To prove something you can submit, use an input written by
-`collect.ts`, `"$RUN"/inputs/<neuron>.json`. Proving takes several minutes.
-
-`host prove` never overwrites files. Each run needs a new `--output` path, and
-its parent directory must exist. The path is checked after proving, so pick a
-new name before you start. Putting the round in the
-file name is a simple way to keep them apart.
-
-### The output file
-
-`--output` holds everything needed on chain, from a single run:
-
-```json
-{
-  "currentRound": 33,
-  "scores": {
-    "0": 1.5,
-    "1": 2.25
-  },
-  "journal": "<hex>",
-  "seal": "<hex>",
-  "imageId": "<64 hex characters>"
-}
-```
-
-| Field | What it is |
-| --- | --- |
-| `currentRound` | The round from `--round` or `.env`, as proven in the journal |
-| `scores` | Person (membership token) id to score, decoded from the journal |
-| `journal` | Raw journal bytes, hex |
-| `seal` | Groth16 proof with the 4-byte selector, hex |
-| `imageId` | Image ID of the guest that produced the proof |
-
-Keep the `--output` file. It is what you submit, and it is the only copy of
-the proof.
-
-
-## Submit the scores
-
-`upload-all.ts` submits all four neurons of a run. To submit one output file
-by hand, you need the NQG contract id, the layer and neuron ids of the neuron
-(`0` to `3` with the setup above) and a proof for the contract's active round.
-Build the prover from the commit matching the contract's guest Image IDs;
-otherwise the contract rejects the proof.
-
-The Stellar CLI must have the admin identity used as `--source`, and that
-account must exist on the selected network. The script requires its
-authorization and submits a transaction that pays a fee. Layer `0`, neuron
-`1` is assigned reputation in the setup above:
-
-```sh
-node scripts/submit-neuron.ts \
-  --neuron assigned-reputation \
-  --output "$RUN/proofs/assigned-reputation.json" \
-  --layer-id 0 \
-  --neuron-id 1 \
-  --contract "$NQG" \
-  --source admin \
-  --network testnet
-```
-
-All seven flags are required and unknown flags are rejected. `--neuron` must
-match the neuron that produced the output file, as in `host prove`; with the
-wrong neuron, the verifier rejects the proof because the Image ID differs.
-
-
-The script:
-
-1. Reads `currentRound`, `scores`, `journal`, `seal` and `imageId` from the
-   output file.
-2. Checks that every id is a decimal `u32` and every score a finite number.
-3. Converts each score to text and scales it to an integer with 6 decimal places.
-4. Asks the contract for its active round and stops if it is not
-   `currentRound`. The contract stores the scores under its active round, not
-   under the round in the file.
-5. Asks the contract for the neuron and stops if it does not exist. The
-   contract would otherwise store the scores under any layer and neuron id.
-6. Prints the neuron's name and runs:
-
-   ```sh
-   stellar contract invoke --id <NQG> --source <SOURCE> --network <NETWORK> \
-     -- set_neuron_result \
-     --layer_id 0 \
-     --neuron_id 1 \
-     --result '{"0":1500000,"1":2250000}' \
-     --guest AssignedReputation \
-     --journal <JOURNAL_HEX> \
-     --seal <SEAL_HEX>
-   ```
-
-Steps 4 and 5 are simulations and cost no fee. The Stellar CLI output is shown
-as is. A non-zero exit code means the script stopped or the call failed, and
-nothing was stored. The contract refuses the call with `NotAMember` (error 18)
-when an id is not an active member, and with `InvalidProof` (error 20) when the
-verifier does not accept the proof.
-
-Submitting again for the same layer, neuron and round replaces the stored
-scores and proof. Results for other rounds stay unchanged.
-
-
-## Calculate the voting powers
-
-`upload-all.ts` does this after its uploads. By hand: when every neuron of
-every layer has scores for the active round, the admin calculates the voting
-powers:
-
-```sh
-stellar contract invoke --network testnet --source admin --id "$NQG" \
-  -- calculate_voting_powers
-```
-
-All layers must cover the same members, otherwise the call fails with
-`LayerResultsUsersMismatch` (error 17). A neuron without scores for the round
-fails it with `NeuronResultNotSet` (error 7). After replacing any scores,
-calculate again.
-
-
-## Read the results
-
-Anyone can read the stored data. `--send=no` simulates the call and does not
-create a transaction or cost a fee. The CLI still needs a `--source` account
-that exists on the network, but it can be any account, not only `admin`.
-
-```sh
-stellar contract invoke --send=no --network testnet --source admin \
-  --id "$NQG" \
-  -- \
-  get_voting_powers
-```
-
-This returns the map from member id to voting power for the active round,
-with 6 decimals, for example `{"1":10183423,"2":7938100,"3":4370918,...}`.
-`get_voting_power_for_user --member_id 1` returns one member's.
-
-```sh
-stellar contract invoke --send=no --network testnet --source admin \
-  --id "$NQG" \
-  -- \
-  get_neuron_result --layer_id 0 --neuron_id 1
-```
-
-This returns one neuron's scores for the active round, for example
-`{"1":4000000,"2":4500000,"3":3000000,...}`. Divide by 10^6 for the original
-value.
-
-```sh
-stellar contract invoke --send=no --network testnet --source admin \
-  --id "$NQG" \
-  -- \
-  get_neuron_proof --layer_id 0 --neuron_id 1
-```
-
-This returns the `seal`, `image_id`, and `journal_digest` that were checked.
-For an earlier round use `get_neuron_result_round` and `get_neuron_proof_round`
-with `--round`. They return `NeuronResultNotSet` (error 7) and
-`NeuronProofNotSet` (error 21) when nothing is stored for that neuron and
-round.
+Docker builds the neuron programs and converts their proofs to Groth16.
+Build settings are defined in [`zkvm/methods/build.rs`](zkvm/methods/build.rs).
+`collect.ts` uses `@stellar/stellar-sdk` to read membership ledger entries.
 
 
 ## The contract
@@ -757,6 +544,65 @@ cargo test --all-features
 `stellar contract build` comes first because one test upgrades the contract to
 a mock WASM.
 
+### Upload checks and recalculation
+
+Use a prover version that matches the guest Image IDs accepted by your
+NQG contract. The configured admin identity must exist on the selected
+network and authorize the upload transactions.
+
+Before sending, the script validates every proof file, scales the scores to
+integers with 6 decimal places and runs simulated checks: the contract's
+active round must match the run's round, it must still validate against the
+membership contract the run read, every neuron in the contract must be in
+the config, and each neuron must have the expected name.
+Nothing is sent unless all checks pass.
+
+The contract refuses an upload with `NotAMember` (error 18) when an id is not
+an active member, and with `InvalidProof` (error 20) when the verifier does
+not accept the proof.
+
+Uploading again for the same layer, neuron and round replaces its scores
+and proof. Results for other rounds stay unchanged.
+
+#### Recalculate voting powers manually
+
+`upload-all.ts` calculates voting powers automatically. To recalculate
+after replacing scores, run:
+
+```sh
+stellar contract invoke --network testnet --source admin --id "$NQG" \
+  -- calculate_voting_powers
+```
+
+All layers must cover the same members, otherwise the call fails with
+`LayerResultsUsersMismatch` (error 17). A neuron without scores for the round
+fails it with `NeuronResultNotSet` (error 7). After replacing any scores,
+calculate again.
+
+### Inspect neuron results and proofs
+
+Use `--send=no` to read these values without sending a transaction:
+
+```sh
+stellar contract invoke --send=no --network testnet --source admin --id "$NQG" \
+  -- get_neuron_result --layer_id 0 --neuron_id 1
+```
+
+This returns one neuron's scores for the active round, for example
+`{"1":4000000,"2":4500000,"3":3000000,...}`. Divide by 10^6 for the original
+value.
+
+```sh
+stellar contract invoke --send=no --network testnet --source admin --id "$NQG" \
+  -- get_neuron_proof --layer_id 0 --neuron_id 1
+```
+
+This returns the `seal`, `image_id`, and `journal_digest` that were checked.
+For an earlier round use `get_neuron_result_round` and `get_neuron_proof_round`
+with `--round`. They return `NeuronResultNotSet` (error 7) and
+`NeuronProofNotSet` (error 21) when nothing is stored for that neuron and
+round.
+
 
 ## What is proven and what is trusted
 
@@ -786,16 +632,15 @@ votes, participation history, author lists, roles, or tiers, and no commitment
 to the input. The scores themselves still reveal something about each
 member's activity.
 
+
 ## After changing a neuron
 
-Changes to a guest in `zkvm/methods/` or to a core crate in `zkvm/core/`
-can change the Image ID, even removing a comment line, because panic messages
-in the binary can contain line numbers. A dependency update or a change to
-the pinned Docker builder can change it too.
+After changing a neuron, its dependencies or the build settings, rebuild
+the prover and check all four Image IDs with `host image-id`.
+`prove-all.ts` also checks them before proving.
 
-Rebuild the prover and run `host image-id` for all four neurons, or let
-`prove-all.ts` do it. Compare the IDs with the constants in
+Compare the IDs with the constants in
 [`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs).
-If an ID changes, the contract administrator must update the accepted guest
-ID before proofs from the new build can be submitted. Until then, use the
-prover built from the commit matching the existing contract.
+If they change, update the constants and upgrade the NQG contract before
+uploading proofs from the new build. An existing deployment needs proofs
+from a prover version whose Image IDs it accepts.

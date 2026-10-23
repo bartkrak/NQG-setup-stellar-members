@@ -16,4 +16,3 @@ serde = "1.0"
 serde_json = "1.0"
 trust-graph-core = { path = "../core/trust-graph" }
 trust-loss-core = { path = "../core/trust-loss" }
-dotenvy = "0.15"
