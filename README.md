@@ -12,7 +12,7 @@ The repository has these parts:
 
 | Part | Path | What it does |
 | --- | --- | --- |
-| Prover | [`zkvm/`](zkvm) | Runs a neuron inside the RISC Zero zkVM and produces a Groth16 proof plus one output JSON file |
+| Prover | [`zkvm/`](zkvm) | Runs a neuron inside the RISC Zero zkVM and produces a Groth16 proof |
 | Flow scripts | [`scripts/`](scripts) | `collect.ts` reads all data needed by the neurons and writes each neuron's input, `prove-all.ts` proves all neurons, `upload-all.ts` sends the proofs and calculates the voting powers |
 | Contract | [`contracts/governance/`](contracts/governance) | The NQG contract. Checks the proof with the Groth16 verifier, stores the scores per layer, neuron and round, and computes the voting powers |
 
@@ -72,8 +72,7 @@ flowchart LR
    power.
 
 The private inputs stay on your machine. Follow [Run the full flow](#run-the-full-flow)
-to run all four neurons, or [Generate a proof for one neuron](#generate-a-proof-for-one-neuron)
-to prove one separately.
+to run all four neurons.
 
 
 ## Requirements
@@ -93,14 +92,16 @@ to prove one separately.
 
 ### Docker setup
 
-Use Docker Desktop or Colima with BuildKit support.
+Docker with BuildKit support is required. Choose the path that matches
+your setup:
 
-#### Docker Desktop
+#### Path 1: You already have Docker Desktop
 
-Start Docker Desktop and give it at least 8 GiB of memory. Buildx and
-BuildKit are included. Continue to [Check Docker](#check-docker).
+Start Docker Desktop and give it at least 8 GiB of memory. It includes
+the Docker CLI, Buildx and BuildKit, so no separate Docker installation
+is needed. Skip Path 2 and continue to [Check Docker](#check-docker).
 
-#### Colima on Apple Silicon
+#### Path 2: You do not have Docker Desktop (Apple Silicon Mac)
 
 Install Colima, the Docker CLI and Buildx with
 [Homebrew](https://formulae.brew.sh/formula/docker-buildx):
@@ -132,8 +133,8 @@ and containers stored in Colima.
 
 #### Check Docker
 
-After starting Docker Desktop or Colima, verify the plugin and the
-connection to Docker:
+After completing either path, verify the plugin and the connection to
+Docker:
 
 ```sh
 docker buildx version
@@ -249,10 +250,6 @@ The example file is configured for testnet.
 | `votingHistory.explorerUrl` | Stellar Expert API base URL for the same network, used to read project registrations and membership transfers |
 | `neurons` | Layer and neuron ids; keep the defaults for the setup above |
 
-`scripts/flow.config.json` is in `.gitignore`. `collect.ts` and `upload-all.ts`
-take `--config <path>` to use another file. `prove-all.ts` reads the run's
-snapshot and takes the round from it.
-
 ### 5. Collect inputs
 
 ```sh
@@ -305,9 +302,7 @@ For the validation rules and manual recalculation command, see
 
 ### 8. Read the results
 
-Anyone can read the stored data. `--send=no` simulates the call and does not
-create a transaction or cost a fee. The CLI still needs a `--source` account
-that exists on the network, but it can be any account, not only `admin`.
+Anyone can read the stored data.
 
 ```sh
 stellar contract invoke --send=no --network testnet --source admin --id "$NQG" \
@@ -411,11 +406,6 @@ different neuron. Those inputs are synthetic. Choose a new output filename:
 existing files are never overwritten, and the path is checked after proving.
 The parent directory must already exist.
 
-For a [collected run](#5-collect-inputs), use `--input "$RUN/inputs/<neuron>.json"`,
-`--output "$RUN/proofs/<neuron>.json"` and the round from `snapshot.json`.
-Create `$RUN/proofs` first if needed. Uploaded scores must belong to active
-members of the configured Membership contract. `prove-all.ts` validates and
-skips existing proofs; `upload-all.ts` still requires all four.
 
 #### Output file
 
@@ -459,7 +449,7 @@ zkvm/target/release/host image-id --neuron trust-loss
 ```
 
 Because the guests are compiled in a pinned Docker image, the same commit gives
-the same Image IDs on every machine and in every folder. Anyone can check the
+**the same Image IDs on every machine and in every folder**. Anyone can check the
 Image IDs in the contract by building that commit and running these commands.
 
 ### Data collection
@@ -472,9 +462,6 @@ members. Voting history comes from the configured Tansu child projects,
 numbered from 1 in registration order. Membership transfer events connect
 past and current voting addresses to the same member id.
 
-The collected data is combined with the mocked Discord roles, current
-trust graph, historical trust lists and NQG sums for trust loss. Each
-neuron's input is saved in the run folder.
 
 ### Proof validation
 
@@ -494,13 +481,6 @@ PageRank runs 1000 iterations over every pair of member and trust list. For
 the 13 testnet members, on an Apple Silicon Mac with Colima (4 CPUs, 8 GiB),
 prior voting history took 6 minutes, assigned reputation under 1 and the trust
 graph 48.
-
-### Build details
-
-Docker builds the neuron programs and converts their proofs to Groth16.
-Build settings are defined in [`zkvm/methods/build.rs`](zkvm/methods/build.rs).
-`collect.ts` uses `@stellar/stellar-sdk` to read membership ledger entries.
-
 
 ## The contract
 
@@ -531,18 +511,6 @@ itself and the caller cannot pass a digest that does not belong to the journal.
 The journal therefore stays readable in the `set_neuron_result` transaction in
 Stellar's transaction history, but not in contract storage, so other contracts
 cannot read it.
-
-The tests use a mock verifier, so they check what the contract sends to it,
-not a real Groth16 proof. Run them in `contracts/`:
-
-```sh
-cd contracts
-stellar contract build
-cargo test --all-features
-```
-
-`stellar contract build` comes first because one test upgrades the contract to
-a mock WASM.
 
 ### Upload checks and recalculation
 
