@@ -6,13 +6,14 @@ import { loadConfig, target } from "./lib/config.ts";
 import { readMembers, type Member } from "./lib/member.ts";
 import { read } from "./lib/stellar.ts";
 import { runPaths, writeJson, type Snapshot } from "./lib/run.ts";
+import { loadOperatorKey, readTrustLists } from "./lib/trust-lists.ts";
 import { readVotingHistory, type VotingHistory } from "./lib/voting-history.ts";
 
 const USAGE = `Usage:
   node scripts/collect.ts [--config <flow.config.json>] [--out <run dir>]
 
-Reads active members and project voting history, adds the mocked Discord
-roles, trust graph and trust loss data from scripts/mocks/, and writes a run
+Reads active members, their trust lists and project voting history, adds the
+mocked Discord roles and trust loss data from scripts/mocks/, and writes a run
 folder with the input of every neuron. Prints the run folder.`;
 
 const MOCKS = fileURLToPath(new URL("mocks/", import.meta.url));
@@ -25,8 +26,6 @@ const MIN_ROUND = 8;
 type Mocks = {
   /** id -> Discord role names (`scripts/mocks/discord-roles.json`). */
   discordRoles: Record<string, string[]>;
-  /** id -> ids it trusts (`scripts/mocks/trust-graph.json`). */
-  trustedForUser: Record<string, string[]>;
   trustLoss: {
     trustedForUserPerRound: Record<string, Record<string, string[]>>;
     neuronsResultsSum: Record<string, number>;
@@ -59,17 +58,12 @@ function isIdList(value: unknown): value is string[] {
 
 function readMocks(): Mocks {
   const discordRoles = readMock("discord-roles.json") as Mocks["discordRoles"];
-  const trustedForUser = readMock("trust-graph.json") as Mocks["trustedForUser"];
   const trustLoss = readMock("trust-loss.json") as Mocks["trustLoss"];
 
   for (const [id, roles] of Object.entries(discordRoles)) {
     if (!isIdList(roles)) throw new Error(`discord-roles.json: ${id} must map to a list of names`);
   }
-  for (const [id, trusted] of Object.entries(trustedForUser)) {
-    if (!isIdList(trusted)) throw new Error(`trust-graph.json: ${id} must map to a list of ids`);
-    if (trusted.includes(id)) throw new Error(`trust-graph.json: ${id} trusts itself`);
-  }
-  return { discordRoles, trustedForUser, trustLoss };
+  return { discordRoles, trustLoss };
 }
 
 /**
@@ -96,7 +90,13 @@ function activeFilter(users: string[]) {
   };
 }
 
-function buildInputs(active: Member[], mocks: Mocks, history: VotingHistory) {
+function buildInputs(
+  active: Member[],
+  mocks: Mocks,
+  history: VotingHistory,
+  trustLists: Map<number, number[]>,
+  unreadableLists: number,
+) {
   const users = active.map((member) => String(member.id));
   const { keep, report } = activeFilter(users);
 
@@ -111,15 +111,19 @@ function buildInputs(active: Member[], mocks: Mocks, history: VotingHistory) {
   };
 
   const trustedForUser: Record<string, string[]> = {};
-  for (const [id, trusted] of Object.entries(mocks.trustedForUser)) {
-    if (!keep(id)) continue;
-    const kept = trusted.filter(keep);
+  for (const [id, trusted] of trustLists) {
+    const kept = trusted.map(String).filter(keep);
     if (kept.length) trustedForUser[id] = kept;
   }
-  report("trust-graph.json");
+  report("trust lists");
   if (Object.keys(trustedForUser).length === 0) {
     // The trust graph guest panics on an empty graph.
-    throw new Error("trust-graph.json has no trust between active members");
+    throw new Error(
+      "no member trusts another active member yet: the trust graph needs at least one saved trust list" +
+        (unreadableLists
+          ? `; ${unreadableLists} saved lists did not open, see above (after a new trust key every member saves again)`
+          : ""),
+    );
   }
   const trustGraph = { users, trustedForUser };
   const trustLoss = {
@@ -162,8 +166,21 @@ async function main() {
   );
 
   const mocks = readMocks();
+  const operator = await loadOperatorKey(config);
+  const trust = await readTrustLists(config, operator, active.map((member) => member.id));
+  console.error(`Trust lists: ${trust.lists.size} of ${active.length} active members saved one`);
+  for (const { id, reason } of trust.unreadable) {
+    console.error(`Trust list of ${id} left out: ${reason}`);
+  }
+  for (const { id, liveUntil } of trust.expiring) {
+    const days = Math.round(((liveUntil - trust.ledger) * 5) / 86400);
+    console.error(
+      `Trust list of ${id} ${days > 0 ? `expires in about ${days} days` : "has expired"} (ledger ${liveUntil}): ` +
+        "a new save, or stellar contract extend, keeps it",
+    );
+  }
   const history = await readVotingHistory(target(config, membership), config.votingHistory);
-  const inputs = buildInputs(active, mocks, history);
+  const inputs = buildInputs(active, mocks, history, trust.lists, trust.unreadable.length);
   const createdAt = new Date().toISOString();
   const dir = resolve(flags.out ?? `${RUNS}r${round}-${createdAt.replace(/[:.]/g, "-")}`);
   if (existsSync(dir)) throw new Error(`${dir} already exists`);
@@ -181,9 +198,13 @@ async function main() {
     members,
     users: active.map((member) => String(member.id)),
     votingHistoryRounds: history.roundByProject,
+    trustLists: {
+      ledger: trust.ledger,
+      saved: [...trust.lists.keys()],
+      unreadable: trust.unreadable,
+    },
     mocked: [
       "assigned-reputation: discord_roles",
-      "trust-graph: trustedForUser",
       "trust-loss: trustedForUserPerRound, neuronsResultsSum",
     ],
   };

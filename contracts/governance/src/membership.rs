@@ -1,7 +1,9 @@
 //! The link to the Stellar Membership contract, whose token ids are the
 //! voter identifiers of this contract.
 
-use soroban_sdk::{Env, IntoVal, InvokeError, Map, Symbol, TryFromVal, Val, symbol_short, vec};
+use soroban_sdk::{
+    Address, Env, IntoVal, InvokeError, Map, Symbol, TryFromVal, Val, symbol_short, vec,
+};
 
 use crate::ContractResult;
 use crate::storage::read_membership_contract;
@@ -28,6 +30,22 @@ pub(crate) fn require_member(env: &Env, member_id: u32) -> ContractResult<()> {
     };
     match revoked {
         Some(false) => Ok(()),
+        _ => Err(VotingSystemError::NotAMember),
+    }
+}
+
+/// The address holding `member_id`, which must name an active member.
+///
+/// `owner_of` answers for revoked tokens too, so `require_member` comes
+/// first. A failure of either reads as `NotAMember`.
+pub(crate) fn active_member_owner(env: &Env, member_id: u32) -> ContractResult<Address> {
+    require_member(env, member_id)?;
+    match env.try_invoke_contract::<Address, InvokeError>(
+        &read_membership_contract(env),
+        &Symbol::new(env, "owner_of"),
+        vec![env, member_id.into_val(env)],
+    ) {
+        Ok(Ok(owner)) => Ok(owner),
         _ => Err(VotingSystemError::NotAMember),
     }
 }

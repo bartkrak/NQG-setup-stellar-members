@@ -20,6 +20,14 @@ export type Snapshot = {
   users: string[];
   /** Voting project key -> round number, oldest registration first. */
   votingHistoryRounds: Record<string, number>;
+  /** The trust lists the trust graph was built from, read at `ledger`. */
+  trustLists: {
+    ledger: number;
+    /** Members with a list that opened. */
+    saved: number[];
+    /** Lists that did not open with the operator key, left out. */
+    unreadable: Array<{ id: number; reason: string }>;
+  };
   /** Input fields that came from `scripts/mocks/`, not from chain. */
   mocked: string[];
 };
