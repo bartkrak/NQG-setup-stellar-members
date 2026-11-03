@@ -40,6 +40,7 @@ error codes and membership integration.
   - [8. Read the results](#8-read-the-results)
   - [Next round](#next-round)
   - [Mocked data](#mocked-data)
+  - [Using mainnet](#using-mainnet)
 - [Trust lists](#trust-lists)
 - [The zkVM prover](#the-zkvm-prover)
   - [Prover commands](#prover-commands)
@@ -252,6 +253,7 @@ Create or update `scripts/flow.config.json` using
 reference. Set `governance` to your deployed NQG contract id and `source`
 to `admin`. Check the network, neuron ids and voting-history settings.
 The example file is configured for testnet.
+See [Using mainnet](#using-mainnet) for the values and prerequisites to change.
 
 | Field | What it is |
 | --- | --- |
@@ -352,8 +354,6 @@ stellar contract invoke --network testnet --source admin --id "$NQG" \
   -- set_current_round --round 9
 ```
 
-Changing the active round does not delete the previous round's data.
-
 ### Mocked data
 
 Discord roles and the trust loss data come from synthetic files in
@@ -367,6 +367,48 @@ Discord roles and the trust loss data come from synthetic files in
 For Discord roles, ids that are not active members are dropped from the
 mocked data, and the script lists them. Active members missing from the file
 get no roles.
+
+
+### Using mainnet
+
+Use the same [full flow](#run-the-full-flow), with the changes below. Create
+or update `scripts/flow.config.json` from
+[`scripts/flow.config.example.json`](scripts/flow.config.example.json):
+
+| Field | Mainnet value |
+| --- | --- |
+| `rpcUrl` | Your mainnet Stellar RPC endpoint |
+| `networkPassphrase` | `Public Global Stellar Network ; September 2015` |
+| `governance` | Your NQG contract id on mainnet |
+| `source` | Stellar CLI identity of that contract's admin |
+| `trustKeyFile` | The operator key file of the mainnet NQG: create a new one in step 3 under another file name, since `trust-key.ts` never overwrites one |
+| `votingHistory.tansuContract` | Compatible Tansu contract id on mainnet |
+| `votingHistory.parentProjectKey` | Parent project key in that Tansu deployment whose child projects supply the voting history |
+| `votingHistory.explorerUrl` | `https://api.stellar.expert/explorer/public` |
+| `neurons` | Keep the example ids if you added the layer and neurons in the order shown in step 3; otherwise match your deployed layout |
+
+
+Configuration is only part of the change:
+
+- **Manual commands.** Replace `--network testnet` with `--network mainnet`
+  in the Stellar CLI commands. This applies to deploying the contracts,
+  adding the layer and setting the operator key in step 3, and to the later
+  read and round-change commands.
+- **Membership and verifier.** In step 3, replace the shared testnet
+  `--membership_contract` address with a compatible mainnet Membership
+  contract containing your members, and use a mainnet verifier compatible
+  with the prover's RISC Zero version. These two addresses are set on NQG,
+  not in `flow.config.json`. 
+- **Trust lists.** Members save their lists in the Stroopies app, which
+  writes to the NQG named by its `MAINNET_TRUST_CONTRACT_ID`. Until that
+  names your mainnet NQG, no member can save a list there, and `collect.ts`
+  stops on the empty trust graph. `trust-list.ts` does not replace the app
+  there: it needs the key that holds each member's token.
+
+
+After applying these changes, collect a new run against mainnet and use
+that run for proving and uploading. The upload script checks that the run
+and the configured governance contract match.
 
 
 ## Trust lists
@@ -413,7 +455,6 @@ Lists are not kept per round: each member has one, which the next save
 replaces. A list saved by a key the member has since moved away from no
 longer opens for them; the app offers a new one, and the operator key still
 opens the old one.
-
 
 ## The zkVM prover
 
