@@ -76,6 +76,16 @@ impl MockMembership {
             .set(&DataKey::Member(token_id), &member);
     }
 
+    /// Move `token_id` to the address `to`, as a key move or a recovery does.
+    pub fn move_key(env: &Env, token_id: u32, to: Address) {
+        let from = Self::owner_of(env, token_id);
+        env.storage().instance().remove(&DataKey::TokenOf(from));
+        env.storage().instance().set(&DataKey::Owner(token_id), &to);
+        env.storage()
+            .instance()
+            .set(&DataKey::TokenOf(to), &token_id);
+    }
+
     /// The member record. Fails only for a token never minted.
     pub fn member(env: &Env, token_id: u32) -> Member {
         env.storage()

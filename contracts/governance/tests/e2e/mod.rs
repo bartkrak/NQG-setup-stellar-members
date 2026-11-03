@@ -9,6 +9,8 @@ mod membership;
 #[cfg(feature = "testutils")]
 mod proof;
 #[cfg(feature = "testutils")]
+mod trust;
+#[cfg(feature = "testutils")]
 mod upgrade;
 #[cfg(feature = "testutils")]
 mod voting;

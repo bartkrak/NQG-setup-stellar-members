@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { Slot } from "./governance.ts";
 import { NEURONS, type Neuron } from "./neurons.ts";
@@ -19,6 +20,12 @@ export type FlowConfig = {
   /** stellar CLI identity of the governance admin. */
   source: string;
   votingHistory: VotingHistoryConfig;
+  /**
+   * The operator key file trust lists are decrypted with (`trust-key.ts`),
+   * outside the repository. A leading `~/` is the home folder. Only
+   * `collect.ts` needs it.
+   */
+  trustKeyFile?: string;
   /** Where each neuron's scores go in the governance contract. */
   neurons: Record<Neuron, Slot>;
 };
@@ -39,6 +46,9 @@ export function loadConfig(path = DEFAULT_CONFIG): FlowConfig {
   for (const field of ["rpcUrl", "networkPassphrase", "governance", "source"]) {
     if (typeof data?.[field] !== "string" || !data[field]) throw fail(`${field} must be set`);
   }
+  if (data.trustKeyFile !== undefined && (typeof data.trustKeyFile !== "string" || !data.trustKeyFile)) {
+    throw fail("trustKeyFile must be a file path");
+  }
   for (const field of ["tansuContract", "parentProjectKey", "explorerUrl"]) {
     if (typeof data.votingHistory?.[field] !== "string" || !data.votingHistory[field]) {
       throw fail(`votingHistory.${field} must be set`);
@@ -50,6 +60,7 @@ export function loadConfig(path = DEFAULT_CONFIG): FlowConfig {
       throw fail(`neurons.${neuron} must have a layerId and a neuronId (strings)`);
     }
   }
+  data.trustKeyFile = data.trustKeyFile?.replace(/^~(?=\/)/, homedir());
   return data as FlowConfig;
 }
 

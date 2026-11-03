@@ -14,17 +14,20 @@ use admin::require_admin;
 
 use crate::admin::set_admin;
 use crate::admin::traits::Admin;
-use crate::membership::require_members;
+use crate::membership::{active_member_owner, require_members};
 pub use crate::neural_governance::LayerAggregator;
 use crate::neural_governance::traits::Governance;
 use crate::neural_governance::{Layer, NGQ, Neuron, aggregate_result};
 use crate::storage::{
     LayerKeyData, NeuronKeyData, NeuronResultKeyData, VotingPowersKeyData, read_layer,
     read_membership_contract, read_neural_governance, read_neuron, read_neuron_proof,
-    read_neuron_result, read_verifier, read_voting_powers, remove_layer, remove_neuron,
-    write_layer, write_membership_contract, write_neural_governance, write_neuron,
-    write_neuron_proof, write_neuron_result, write_verifier, write_voting_powers,
+    read_neuron_result, read_trust_key, read_trust_list, read_verifier, read_voting_powers,
+    remove_layer, remove_neuron, write_layer, write_membership_contract, write_neural_governance,
+    write_neuron, write_neuron_proof, write_neuron_result, write_trust_key, write_trust_list,
+    write_verifier, write_voting_powers,
 };
+use crate::trust::traits::TrustLists;
+pub use crate::trust::{KeyWrap, MAX_TRUST_LIST_SIZE, TrustList};
 use crate::types::VotingSystemError;
 use crate::verifier::verify_proof;
 pub use crate::verifier::{NeuronGuest, NeuronProof};
@@ -34,6 +37,7 @@ mod fixed_mul_floor;
 mod membership;
 mod neural_governance;
 mod storage;
+mod trust;
 pub mod types;
 mod verifier;
 
@@ -69,6 +73,12 @@ pub enum DataKey {
     NeuronProofKey(NeuronResultKeyData),
     LayerKey(LayerKeyData),
     VotingPowers(VotingPowersKeyData),
+    /// storage type: instance
+    /// X25519 public key of the operator, to which trust lists are encrypted
+    TrustKey,
+    /// storage type: persistent
+    /// member id -> encrypted trust list
+    TrustList(u32),
 }
 
 #[contractimpl]
@@ -177,6 +187,40 @@ impl Admin for VotingSystem {
 
         env.deployer()
             .update_current_contract(ContractExecutable::Wasm(wasm_hash));
+    }
+}
+
+#[contractimpl]
+impl TrustLists for VotingSystem {
+    fn set_trust_key(env: Env, key: BytesN<32>) {
+        require_admin(&env);
+
+        write_trust_key(&env, &key);
+    }
+
+    fn get_trust_key(env: Env) -> Result<BytesN<32>, VotingSystemError> {
+        read_trust_key(&env)
+    }
+
+    fn set_trust_list(
+        env: Env,
+        member_id: u32,
+        trust_list: TrustList,
+    ) -> Result<(), VotingSystemError> {
+        active_member_owner(&env, member_id)?.require_auth();
+        if trust_list.list.len() > MAX_TRUST_LIST_SIZE {
+            return Err(VotingSystemError::TrustListTooLarge);
+        }
+        if trust_list.operator.key != read_trust_key(&env)? {
+            return Err(VotingSystemError::TrustKeyMismatch);
+        }
+
+        write_trust_list(&env, member_id, &trust_list);
+        Ok(())
+    }
+
+    fn get_trust_list(env: Env, member_id: u32) -> Option<TrustList> {
+        read_trust_list(&env, member_id)
     }
 }
 

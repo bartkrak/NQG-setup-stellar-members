@@ -31,4 +31,10 @@ pub enum VotingSystemError {
     /// The verifier contract did not accept the proof of a neuron result.
     InvalidProof = 20,
     NeuronProofNotSet = 21,
+    /// The admin has not set the operator key trust lists are encrypted to.
+    TrustKeyNotSet = 22,
+    /// An encrypted trust list is longer than `MAX_TRUST_LIST_SIZE`.
+    TrustListTooLarge = 23,
+    /// A trust list's operator copy is not sealed for the current trust key.
+    TrustKeyMismatch = 24,
 }

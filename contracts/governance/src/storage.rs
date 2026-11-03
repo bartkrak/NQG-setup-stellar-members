@@ -1,10 +1,11 @@
-use soroban_sdk::{Address, Env, Map, String};
+use soroban_sdk::{Address, BytesN, Env, Map, String};
 
 use crate::neural_governance::{Layer, NGQ, Neuron};
 use crate::storage::key_data::{
     get_layer_key, get_neuron_key, get_neuron_proof_key, get_neuron_result_key,
     get_voting_powers_key,
 };
+use crate::trust::TrustList;
 use crate::types::VotingSystemError;
 use crate::verifier::NeuronProof;
 use crate::{ContractResult, DataKey};
@@ -137,6 +138,34 @@ pub(crate) fn read_verifier(env: &Env) -> Address {
 
 pub(crate) fn write_verifier(env: &Env, verifier: &Address) {
     env.storage().instance().set(&DataKey::Verifier, verifier);
+}
+
+pub(crate) fn read_trust_key(env: &Env) -> ContractResult<BytesN<32>> {
+    env.storage()
+        .instance()
+        .get(&DataKey::TrustKey)
+        .ok_or(VotingSystemError::TrustKeyNotSet)
+}
+
+pub(crate) fn write_trust_key(env: &Env, key: &BytesN<32>) {
+    env.storage().instance().set(&DataKey::TrustKey, key);
+}
+
+pub(crate) fn read_trust_list(env: &Env, member_id: u32) -> Option<TrustList> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TrustList(member_id))
+}
+
+/// Written lists live as long as the network allows: they are read again at
+/// every round, not only the one they were written in.
+pub(crate) fn write_trust_list(env: &Env, member_id: u32, trust_list: &TrustList) {
+    let key = DataKey::TrustList(member_id);
+    let max_ttl = env.storage().max_ttl();
+    env.storage().persistent().set(&key, trust_list);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, max_ttl, max_ttl);
 }
 
 pub(crate) fn read_voting_powers(env: &Env, round: u32) -> ContractResult<Map<u32, i64>> {

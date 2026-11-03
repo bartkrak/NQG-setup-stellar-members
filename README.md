@@ -13,7 +13,7 @@ The repository has these parts:
 | Part | Path | What it does |
 | --- | --- | --- |
 | Prover | [`zkvm/`](zkvm) | Runs a neuron inside the RISC Zero zkVM and produces a Groth16 proof |
-| Flow scripts | [`scripts/`](scripts) | `collect.ts` reads all data needed by the neurons and writes each neuron's input, `prove-all.ts` proves all neurons, `upload-all.ts` sends the proofs and calculates the voting powers |
+| Flow scripts | [`scripts/`](scripts) | `collect.ts` reads all data needed by the neurons and writes each neuron's input, `prove-all.ts` proves all neurons, `upload-all.ts` sends the proofs and calculates the voting powers; `trust-key.ts` creates the operator key, `trust-list.ts` reads or saves a member's trust list |
 | Contract | [`contracts/governance/`](contracts/governance) | The NQG contract. Checks the proof with the Groth16 verifier, stores the scores per layer, neuron and round, and computes the voting powers |
 
 NQG uses two other contracts: Stellar Membership to check that members are
@@ -41,6 +41,7 @@ error codes and membership integration.
   - [Next round](#next-round)
   - [Mocked data](#mocked-data)
   - [Using mainnet](#using-mainnet)
+- [Trust lists](#trust-lists)
 - [The zkVM prover](#the-zkvm-prover)
   - [Prover commands](#prover-commands)
   - [Image IDs](#image-ids)
@@ -55,6 +56,7 @@ error codes and membership integration.
 flowchart LR
     membership["Stellar Membership<br/>contract"] -->|members, roles| collect["collect.ts"]
     tansu["Tansu + Stellar Expert"] -->|voting history| collect
+    contract -->|"trust lists, encrypted"| collect
     mocks["scripts/mocks/"] --> collect
     collect -->|"inputs/"| prove["prove-all.ts<br/>host prove (zkvm/)"]
     prove -->|"proofs/"| upload["upload-all.ts"]
@@ -64,7 +66,8 @@ flowchart LR
 ```
 
 
-1. `collect.ts` gathers member data and voting history, combines it with the
+1. `collect.ts` gathers member data and voting history, decrypts the
+   members' [trust lists](#trust-lists), combines them with the
    [mocked data](#mocked-data), and writes an input file for each neuron.
 2. `prove-all.ts` runs all four neurons locally. Each produces scores and a
    proof that they were calculated correctly.
@@ -233,6 +236,16 @@ admin can upload scores and calculate voting powers.
    This creates layer `0` with neuron ids `0`, `1`, `2` and `3`. Keep the
    names and order shown above to match the example configuration.
 
+4. Create the operator key the members' [trust lists](#trust-lists) are
+   encrypted to, and give its public key to NQG. Keep the file outside the
+   repository: whoever holds it reads every trust list.
+
+   ```sh
+   node scripts/trust-key.ts --out ~/.config/nqg/trust-key.json
+   stellar contract invoke --network testnet --source admin --id $NQG -- set_trust_key \
+     --key $(node -p 'require(process.argv[1]).publicKey' ~/.config/nqg/trust-key.json)
+   ```
+
 ### 4. Configure the scripts
 
 Create or update `scripts/flow.config.json` using
@@ -247,6 +260,7 @@ See [Using mainnet](#using-mainnet) for the values and prerequisites to change.
 | `rpcUrl`, `networkPassphrase` | Stellar network RPC URL and passphrase |
 | `governance` | The NQG contract id |
 | `source` | Stellar CLI identity of the NQG admin |
+| `trustKeyFile` | The operator key file of step 3; `~/` is the home folder. Only `collect.ts` needs it |
 | `votingHistory.tansuContract` | Tansu contract id containing the projects and proposals |
 | `votingHistory.parentProjectKey` | Parent project key whose child projects supply voting history |
 | `votingHistory.explorerUrl` | Stellar Expert API base URL for the same network, used to read project registrations and membership transfers |
@@ -258,9 +272,21 @@ See [Using mainnet](#using-mainnet) for the values and prerequisites to change.
 RUN=$(node scripts/collect.ts)
 ```
 
-This gathers member data and voting history, adds the
-[mocked data](#mocked-data), and writes the four input files. The run folder
-is saved in `$RUN`. Use `--out <dir>` to choose another output folder.
+This gathers member data and voting history, reads and decrypts the
+members' trust lists, adds the [mocked data](#mocked-data), and writes the
+four input files. The run folder is saved in `$RUN`. Use `--out <dir>` to
+choose another output folder.
+
+It stops while no active member trusts another one: the trust graph neuron
+cannot score an empty graph. Members save their lists in the Stroopies app,
+which writes to the one NQG contract its worker names. On an NQG of your own,
+save them with `trust-list.ts`, as each member: `--as` is the stellar CLI
+identity holding the token.
+
+```sh
+node scripts/trust-list.ts --member 1 --as member-1 --trust 2,3
+node scripts/trust-list.ts --member 1 --as member-1   # prints [2,3]
+```
 
 ### 6. Prove the neurons
 
@@ -330,20 +356,18 @@ stellar contract invoke --network testnet --source admin --id "$NQG" \
 
 ### Mocked data
 
-Discord roles, trust relationships and NQG sums come from synthetic files in
+Discord roles and the trust loss data come from synthetic files in
 [`scripts/mocks/`](scripts/mocks), keyed by membership token id:
 
 | File | Becomes | Later from |
 | --- | --- | --- |
 | `discord-roles.json` | `discord_roles` of assigned reputation | Discord roles of the account the member bound |
-| `trust-graph.json` | `trustedForUser` of the trust graph | wherever members declare trust |
-| `trust-loss.json` | Complete `trustedForUserPerRound` and `neuronsResultsSum` of trust loss | Trust declarations per round and the chosen base NQG scores |
+| `trust-loss.json` | Complete `trustedForUserPerRound` and `neuronsResultsSum` of trust loss | Trust lists per round and the chosen base NQG scores |
 
-For Discord roles and the trust graph, ids that are not active members are
-dropped from the mocked data, and the script lists them. Active members
-missing from those files get no roles or trust.
-The trust graph needs at least one trust between active members, since the
-guest fails on an empty graph.
+For Discord roles, ids that are not active members are dropped from the
+mocked data, and the script lists them. Active members missing from the file
+get no roles.
+
 
 ### Using mainnet
 
@@ -357,6 +381,7 @@ or update `scripts/flow.config.json` from
 | `networkPassphrase` | `Public Global Stellar Network ; September 2015` |
 | `governance` | Your NQG contract id on mainnet |
 | `source` | Stellar CLI identity of that contract's admin |
+| `trustKeyFile` | The operator key file of the mainnet NQG: create a new one in step 3 under another file name, since `trust-key.ts` never overwrites one |
 | `votingHistory.tansuContract` | Compatible Tansu contract id on mainnet |
 | `votingHistory.parentProjectKey` | Parent project key in that Tansu deployment whose child projects supply the voting history |
 | `votingHistory.explorerUrl` | `https://api.stellar.expert/explorer/public` |
@@ -366,19 +391,70 @@ or update `scripts/flow.config.json` from
 Configuration is only part of the change:
 
 - **Manual commands.** Replace `--network testnet` with `--network mainnet`
-  in the Stellar CLI commands. This applies to deploying the contracts and
-  adding the layer in step 3, and to the later read and round-change commands.
+  in the Stellar CLI commands. This applies to deploying the contracts,
+  adding the layer and setting the operator key in step 3, and to the later
+  read and round-change commands.
 - **Membership and verifier.** In step 3, replace the shared testnet
   `--membership_contract` address with a compatible mainnet Membership
   contract containing your members, and use a mainnet verifier compatible
   with the prover's RISC Zero version. These two addresses are set on NQG,
   not in `flow.config.json`. 
+- **Trust lists.** Members save their lists in the Stroopies app, which
+  writes to the NQG named by its `MAINNET_TRUST_CONTRACT_ID`. Until that
+  names your mainnet NQG, no member can save a list there, and `collect.ts`
+  stops on the empty trust graph. `trust-list.ts` does not replace the app
+  there: it needs the key that holds each member's token.
 
 
 After applying these changes, collect a new run against mainnet and use
 that run for proving and uploading. The upload script checks that the run
 and the configured governance contract match.
 
+
+## Trust lists
+
+Members keep the list of the members they trust in the
+[Stroopies app](https://stroopies.org), on their profile. The NQG contract
+stores each list encrypted, keyed by token id: only the member and the
+holder of the operator key can read it. `collect.ts` decrypts every active
+member's list with the operator key and turns them into `trustedForUser` of
+the trust graph.
+
+A fresh data key encrypts the token ids with AES-256-GCM, padded so every
+list has the same size. The data key is sealed twice, with X25519 and
+HKDF-SHA256: for the member and for the operator key that `get_trust_key`
+returns. The contract stores the encrypted ids and the two sealed copies
+separately (`TrustList { list, member, operator }`), and refuses a list whose
+operator copy is not for the current key. The member's key is derived from a
+signature of a fixed message by their wallet, so it is never stored. The
+format is defined in [`scripts/lib/trust.ts`](scripts/lib/trust.ts), a copy of
+the app's `shared/trust.ts`;
+[`scripts/lib/trust.vectors.json`](scripts/lib/trust.vectors.json) holds lists
+the app sealed, which `node --test scripts/lib/trust.test.ts` opens.
+
+| Step | Who | Call |
+| --- | --- | --- |
+| Set the operator key | NQG admin | `set_trust_key(key)`, see [step 3](#3-set-up-the-contracts) |
+| Save a list | the member, from the app | `set_trust_list(member_id, trust_list)`, signed by the address holding the token on the membership contract |
+| Save or read a list from the CLI | the member | `node scripts/trust-list.ts --member <id> --as <identity> [--trust <ids>]`; it signs the app's message with the identity, so the app opens the same list |
+| Read the lists | `collect.ts` | the `TrustList(member_id)` entries of NQG, decrypted with `trustKeyFile` |
+
+`collect.ts` first checks that the key file matches `get_trust_key`. It
+drops ids that are not active members, and leaves out, with a message, a
+list that does not open with the operator key. `snapshot.json` records which
+members had a list and at which ledger they were read. After a new
+`set_trust_key`, every stored list is sealed for the old key: none opens until
+its member saves again.
+
+A list lives for the network's maximum TTL after its last save: 3,110,400
+ledgers, about 180 days, on testnet. `collect.ts` warns about lists that
+expire within 30 days. A new save keeps a list, and so does
+`stellar contract extend`, which anyone can send.
+
+Lists are not kept per round: each member has one, which the next save
+replaces. A list saved by a key the member has since moved away from no
+longer opens for them; the app offers a new one, and the operator key still
+opens the old one.
 
 ## The zkVM prover
 
@@ -514,7 +590,8 @@ Proving time grows with the number of members, the trust graph fastest: its
 PageRank runs 1000 iterations over every pair of member and trust list. For
 the 13 testnet members, on an Apple Silicon Mac with Colima (4 CPUs, 8 GiB),
 prior voting history took 6 minutes, assigned reputation under 1 and the trust
-graph 48.
+graph 48. That graph was the old mock, about two trusted members each; a real
+trust list holds up to 64, so the trust graph takes longer.
 
 ## The contract
 
@@ -523,6 +600,9 @@ workspace, using `soroban-sdk` 28. Its
 [README](contracts/governance/README.md) lists every function and error code.
 The proof check is in
 [`contracts/governance/src/verifier.rs`](contracts/governance/src/verifier.rs).
+
+The contract also stores the members' encrypted [trust lists](#trust-lists)
+(`set_trust_key`, `set_trust_list`, `get_trust_list`).
 
 `set_neuron_result(layer_id, neuron_id, result, guest, journal, seal)` step by
 step:
@@ -616,6 +696,8 @@ What is not proven:
 
 - **The input.** The proof does not show that the voting history, roles,
   tiers or trust declarations are real or complete, or who supplied them.
+  In particular it does not show that the trust graph is the one in the
+  members' trust lists: the operator decrypts them and supplies it.
   Trust loss also takes NQG sums as input; these are not linked to the other
   neurons' proofs. The input provider is trusted.
 - **The round.** The proof shows which round the scores were calculated for,
@@ -629,7 +711,13 @@ What is not proven:
 - **The layer and neuron.** The contract does not tie a guest to a layer or
   neuron. The admin chooses both.
 
-Privacy: the journal contains only the round and the scores. It contains no
+Privacy: the holder of the operator key reads every member's trust list.
+`collect.ts` writes them decrypted to `runs/<run>/inputs/trust-graph.json`
+(gitignored), and logs the trusted ids it drops. The trust graph scores are
+public per token id and show how trusted each member is. A revoked member can
+no longer change or clear their list: it stays on chain, encrypted, until it
+expires.
+The journal contains only the round and the scores. It contains no
 votes, participation history, author lists, roles, or tiers, and no commitment
 to the input. The scores themselves still reveal something about each
 member's activity.
