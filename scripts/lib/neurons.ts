@@ -10,7 +10,3 @@ export const GUESTS: Record<Neuron, string> = {
   "trust-graph": "TrustGraph",
   "trust-loss": "TrustLoss",
 };
-
-export function isNeuron(name: string): name is Neuron {
-  return (NEURONS as readonly string[]).includes(name);
-}
