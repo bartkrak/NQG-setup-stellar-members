@@ -14,15 +14,24 @@ pub enum Vote {
 /// The votes of one round: submission -> user -> vote.
 pub type RoundVotes = HashMap<String, HashMap<String, Vote>>;
 
-const ROUND_IMPORTANCE_DECAY_OFFSET: u32 = 8;
+// The round weight curve is centred this many rounds before the current one. In the first
+// rounds the centre is below round 1 (negative), which the curve handles like any other value.
+const ROUND_IMPORTANCE_DECAY_OFFSET: u32 = 3;
+// Round weight curve: generalised logistic from 0 to 1.
+const ROUND_WEIGHT_B: f64 = 0.9;
+const ROUND_WEIGHT_NU: f64 = 2.0;
+// Final bonus curve: generalised logistic scaled to [0, FINAL_BONUS_K).
+const FINAL_BONUS_K: f64 = 5.0;
+const FINAL_BONUS_B: f64 = 1.9;
+const FINAL_BONUS_X_OFF: f64 = 3.0;
 const ACTIVE_VOTES_HISTORY_OLDEST_ROUND: u32 = 32;
 const ACTIVE_VOTES_MIN_RATIO: f64 = 0.5;
 const OLDEST_ROUND: u32 = 1;
 
 pub fn validate_current_round(current_round: u32) -> Result<()> {
     ensure!(
-        current_round >= ROUND_IMPORTANCE_DECAY_OFFSET,
-        "CURRENT_ROUND must be at least 8"
+        current_round >= OLDEST_ROUND,
+        "CURRENT_ROUND must be at least {OLDEST_ROUND}"
     );
     Ok(())
 }
@@ -141,17 +150,9 @@ impl PriorVotingHistoryNeuron {
 
     /// Computes the prior-voting-history bonus for a single user.
     ///
-    /// # Panics
-    ///
-    /// Panics with `"history bonus offset is bigger than current round"` if `current_round` is
-    /// smaller than the fixed decay offset (for example after a round reset to 0), which
-    /// would otherwise underflow the round-importance offset subtraction.
+    /// `current_round` may be smaller than the decay offset: the centre of the round weight
+    /// curve is then negative and moves up as rounds pass.
     pub fn calculate_bonus(&self, user: String) -> f64 {
-        assert!(
-            self.current_round >= ROUND_IMPORTANCE_DECAY_OFFSET,
-            "history bonus offset is bigger than current round"
-        );
-
         // 1. loop over all rounds up to current (a submitter couldn't vote in their own round,
         //    so that round may be missing from their voting history)
         // 2. if user had a submission in this round count it as 100% active voting
@@ -163,11 +164,19 @@ impl PriorVotingHistoryNeuron {
             .get(&user)
             .cloned()
             .unwrap_or_else(Vec::new);
-        let x_offset: f64 = (self.current_round - ROUND_IMPORTANCE_DECAY_OFFSET) as f64;
+        let x_offset = f64::from(self.current_round) - f64::from(ROUND_IMPORTANCE_DECAY_OFFSET);
         let mut rounds_weights_sum = 0.0;
         for round in OLDEST_ROUND..=self.current_round {
-            let round_weight: f64 =
-                generalised_logistic_function(0.0, 1.0, 1.0, 1.0, 1.0, 4.0, x_offset, round as f64);
+            let round_weight: f64 = generalised_logistic_function(
+                0.0,
+                1.0,
+                1.0,
+                1.0,
+                ROUND_WEIGHT_B,
+                ROUND_WEIGHT_NU,
+                x_offset,
+                round as f64,
+            );
             if self
                 .submitters_per_round
                 .get(&round)
@@ -189,11 +198,23 @@ impl PriorVotingHistoryNeuron {
                 }
             }
         }
+        // the curve below is 0 at 0 only up to rounding; keep "no history" an exact 0
+        if rounds_weights_sum == 0.0 {
+            return 0.0;
+        }
         // pass the value into logistic curve
-        // a = -k/exp(b*x_off) ensures f(0) = 0 exactly; k = 3.0 scales output to [0, 3]
-        const K: f64 = 3.0;
-        const A: f64 = -K / 148.413_159_102_576_6; // exp(5.0) precomputed for const
-        generalised_logistic_function(A, K, 1.0, 1.0, 1.0, 1.0, 5.0, rounds_weights_sum)
+        // a = -k * exp(-b * x_off) makes f(0) = 0; k scales the output to [0, k)
+        let a = -FINAL_BONUS_K * f64::exp(-FINAL_BONUS_B * FINAL_BONUS_X_OFF);
+        generalised_logistic_function(
+            a,
+            FINAL_BONUS_K,
+            1.0,
+            1.0,
+            FINAL_BONUS_B,
+            1.0,
+            FINAL_BONUS_X_OFF,
+            rounds_weights_sum,
+        )
     }
 }
 
@@ -234,11 +255,56 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
 
+    // Computed independently of this crate from the curve parameters (round weights B 0.9,
+    // NU 2, decay offset 3; final bonus K 5, B 1.9, X_OFF 3).
+    const W1_BONUS: f64 = 0.08670104357426563;
+    const FULL_10_BONUS: f64 = 4.87838770192852;
+
     fn scores(input: Value) -> BTreeMap<String, f64> {
         PriorVotingHistoryInput::from_json(&input.to_string())
             .unwrap()
             .calculate(33)
             .unwrap()
+    }
+
+    fn scores_at(current_round: u32, input: Value) -> BTreeMap<String, f64> {
+        PriorVotingHistoryInput::from_json(&input.to_string())
+            .unwrap()
+            .calculate(current_round)
+            .unwrap()
+    }
+
+    fn assert_near(actual: f64, expected: f64) {
+        assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn rounds_start_at_1_with_a_negative_curve_offset() {
+        // round 1, decay offset 3: the round weight curve is centred at -2
+        let result = scores_at(
+            1,
+            json!({ "users": ["1", "2"], "usersRoundHistory": { "1": [1] } }),
+        );
+        // weight 1 / sqrt(1 + e^(-0.9 * 3)) = 0.96800, then the final bonus curve
+        assert_near(result["1"], W1_BONUS);
+        assert_eq!(result["2"], 0.0);
+        assert!(
+            PriorVotingHistoryInput::from_json(r#"{"users":[],"usersRoundHistory":{}}"#)
+                .unwrap()
+                .calculate(0)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn full_history_approaches_the_maximum_of_5() {
+        let rounds: Vec<u32> = (1..=10).collect();
+        let result = scores_at(
+            10,
+            json!({ "users": ["1"], "usersRoundHistory": { "1": rounds } }),
+        );
+        assert_near(result["1"], FULL_10_BONUS);
+        assert!(result["1"] < 5.0);
     }
 
     #[test]

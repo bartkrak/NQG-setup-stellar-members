@@ -19,8 +19,8 @@ folder with the input of every neuron. Prints the run folder.`;
 const MOCKS = fileURLToPath(new URL("mocks/", import.meta.url));
 const RUNS = fileURLToPath(new URL("../runs/", import.meta.url));
 
-/** Prior voting history refuses lower rounds (`validate_current_round`). */
-const MIN_ROUND = 8;
+/** Prior voting history and trust loss refuse lower rounds (`validate_current_round`). */
+const MIN_ROUND = 1;
 
 /** Mocked data, keyed by membership token id. */
 type Mocks = {
@@ -154,7 +154,7 @@ async function main() {
 
   const round = Number(read(governance, "get_current_round"));
   if (round < MIN_ROUND) {
-    throw new Error(`the active round is ${round}; prior voting history needs at least ${MIN_ROUND}`);
+    throw new Error(`the active round is ${round}; the neurons need at least ${MIN_ROUND}`);
   }
   const membership = String(read(governance, "get_membership_contract"));
   const { members, ledger } = await readMembers(config, membership);

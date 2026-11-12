@@ -91,7 +91,7 @@ to run all four neurons.
   ```sh
   curl -L https://risczero.com/install | bash
   rzup install r0vm 3.0.6
-  rzup use r0vm 3.0.6
+  rzup default r0vm 3.0.6
   ```
 
 ### Docker setup
@@ -462,9 +462,9 @@ The current prover supports four neurons:
 
 | `--neuron` | Private input | Scoring logic | Example input |
 | --- | --- | --- | --- |
-| `prior-voting-history` | `users`, `usersRoundHistory`, optional `votesPerRound` and `submittersPerRound` | Voting-history and active-participation bonuses. Without `votesPerRound` every round a user voted in counts as fully active; without `submittersPerRound` there is no submitter bonus | [`example_prior_voting_history.json`](zkvm/data/example_prior_voting_history.json) |
+| `prior-voting-history` | `users`, `usersRoundHistory`, optional `votesPerRound` and `submittersPerRound` | Voting-history and active-participation bonuses, 0 to 5, for any round from 1. Without `votesPerRound` every round a user voted in counts as fully active; without `submittersPerRound` there is no submitter bonus | [`example_prior_voting_history.json`](zkvm/data/example_prior_voting_history.json) |
 | `assigned-reputation` | `users`, each with `id`, `tier`, `discord_roles` | Reputation-tier bonus plus Discord-role bonuses | [`example_assigned_reputation.json`](zkvm/data/example_assigned_reputation.json) |
-| `trust-graph` | `users`, `trustedForUser` | Normalized PageRank with bonuses for trust from highly trusted users and filled trust lists | [`example_trust_graph.json`](zkvm/data/example_trust_graph.json) |
+| `trust-graph` | `users`, `trustedForUser` | PageRank min-max scaled to 0-3, a bonus for trust from highly trusted users whose total gain saturates at 5 (`5 * tanh(gain / 5)`), and a bonus for a filled trust list | [`example_trust_graph.json`](zkvm/data/example_trust_graph.json) |
 | `trust-loss` | `users`, `trustedForUserPerRound`, `neuronsResultsSum` | Negative logistic penalty when at least three distinct members remove trust | [`example_trust_loss.json`](zkvm/data/example_trust_loss.json) |
 
 The implementation is split into:

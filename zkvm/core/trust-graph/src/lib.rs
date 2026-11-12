@@ -2,8 +2,9 @@
 // Used by both the host and the zkVM guest, so the proven computation
 // is exactly the same code the host (or anyone else) can run natively.
 //
-// Ported from neurons/src/trust_graph.rs. The scoring is unchanged; the input
-// is one round's trust lists and the output is the round plus the scores.
+// Ported from neurons/src/trust_graph.rs, including the highly trusted bonus
+// saturation. The input is one round's trust lists and the output is the round
+// plus the scores.
 
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,8 @@ const HIGHLY_TRUSTED_PERCENT_THRESHOLD: usize = 10;
 const HIGHLY_TRUSTED_PERCENT_BONUS: f64 = 15.0;
 // users that have their own trust list filled get a bonus of X % of their own score
 const FILLED_TRUST_LIST_PERCENT_BONUS: f64 = 10.0;
+// the total gain from the highly trusted bonus approaches this value and never exceeds it
+const HIGHLY_TRUSTED_BONUS_SATURATION: f64 = 5.0;
 
 /// Trust lists of the round being scored. User IDs are decimal strings.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -87,11 +90,15 @@ impl TrustGraphNeuron {
     pub fn calculate_result(&self, users: &[String]) -> HashMap<String, f64> {
         let page_rank_result = self.handle_page_rank(users);
         let highly_trusted_bonus_result = self.handle_highly_trusted_bonus(
-            page_rank_result,
+            page_rank_result.clone(),
             HIGHLY_TRUSTED_PERCENT_THRESHOLD,
             HIGHLY_TRUSTED_PERCENT_BONUS,
         );
-        self.handle_filled_trust_list_bonus(highly_trusted_bonus_result)
+        let saturated_bonus_result = Self::handle_highly_trusted_bonus_saturation(
+            &page_rank_result,
+            highly_trusted_bonus_result,
+        );
+        self.handle_filled_trust_list_bonus(saturated_bonus_result)
     }
 
     fn handle_page_rank(&self, users: &[String]) -> HashMap<String, f64> {
@@ -172,6 +179,53 @@ impl TrustGraphNeuron {
             .get(user)
             .is_some_and(|trusted_users| !trusted_users.is_empty())
     }
+
+    /// Squashes only what the highly trusted bonus added; the page rank base is kept as is.
+    fn handle_highly_trusted_bonus_saturation(
+        base: &HashMap<String, f64>,
+        with_bonus: HashMap<String, f64>,
+    ) -> HashMap<String, f64> {
+        with_bonus
+            .into_iter()
+            .map(|(user, score)| {
+                let base_score = *base.get(&user).unwrap_or(&0.0);
+                (
+                    user,
+                    base_score + saturate_highly_trusted_bonus(score - base_score),
+                )
+            })
+            .collect()
+    }
+}
+
+/// `SATURATION * tanh(gain / SATURATION)` written as the generalised logistic curve: close to
+/// `gain` for small gains, never above `HIGHLY_TRUSTED_BONUS_SATURATION`.
+fn saturate_highly_trusted_bonus(gain: f64) -> f64 {
+    generalised_logistic_function(
+        -HIGHLY_TRUSTED_BONUS_SATURATION,
+        HIGHLY_TRUSTED_BONUS_SATURATION,
+        1.0,
+        1.0,
+        2.0 / HIGHLY_TRUSTED_BONUS_SATURATION,
+        1.0,
+        0.0,
+        gain,
+    )
+}
+
+// Same helper and arithmetic as the reference types.rs.
+#[allow(clippy::too_many_arguments)]
+fn generalised_logistic_function(
+    a: f64,
+    k: f64,
+    c: f64,
+    q: f64,
+    b: f64,
+    nu: f64,
+    x_off: f64,
+    x: f64,
+) -> f64 {
+    a + (k - a) / (f64::powf(c + q * f64::exp(-b * (x - x_off)), 1.0 / nu))
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -385,16 +439,160 @@ mod tests {
         let users = users_vec(&["A", "B", "C", "D", "E"]);
 
         let via_public = neuron.calculate_result(&users);
-        let manual = neuron.handle_filled_trust_list_bonus(neuron.handle_highly_trusted_bonus(
-            neuron.handle_page_rank(&users),
+        let base = neuron.handle_page_rank(&users);
+        let with_bonus = neuron.handle_highly_trusted_bonus(
+            base.clone(),
             HIGHLY_TRUSTED_PERCENT_THRESHOLD,
             HIGHLY_TRUSTED_PERCENT_BONUS,
-        ));
+        );
+        let manual = neuron.handle_filled_trust_list_bonus(
+            TrustGraphNeuron::handle_highly_trusted_bonus_saturation(&base, with_bonus),
+        );
 
         assert_eq!(via_public.len(), manual.len());
         for (k, v) in &manual {
             assert_f64_near!(via_public.get(k).unwrap(), v);
         }
+    }
+
+    #[test]
+    fn calculate_result_pins_the_sample_scores() {
+        let neuron = TrustGraphNeuron::from_data(sample_trust());
+        let result = neuron.calculate_result(&users_vec(&["A", "B", "C", "D", "E"]));
+        let base = neuron.handle_page_rank(&users_vec(&["A", "B", "C"]));
+        // page rank A 3.0, B 2.112, C 1.397; only A is highly trusted and trusts B and C:
+        // gain 15% squashed by 5 * tanh(gain / 5), then +10% for a filled trust list
+        let expected = |base: f64| (base + 5.0 * (base * 0.15 / 5.0).tanh()) * 1.10;
+        assert_f64_near!(result["A"], 3.0 * 1.10);
+        assert_f64_near!(result["B"], expected(base["B"]));
+        assert_f64_near!(result["C"], expected(base["C"]));
+        assert_f64_near!(result["B"], 2.672);
+        assert_f64_near!(result["C"], 1.767);
+        assert_f64_near!(result["D"], 0.0);
+        assert_f64_near!(result["E"], 0.0);
+    }
+
+    #[test]
+    fn saturation_constants_match_the_agreed_parameters() {
+        assert_eq!(NORMALIZATION_SCALE, 3.0);
+        assert_eq!(HIGHLY_TRUSTED_BONUS_SATURATION, 5.0);
+    }
+
+    #[test]
+    fn saturation_is_zero_at_zero_and_identity_like_for_small_gains() {
+        assert_eq!(saturate_highly_trusted_bonus(0.0), 0.0);
+        // slope 1 at the origin: small gains pass through almost unchanged
+        assert_f64_near!(saturate_highly_trusted_bonus(0.1), &0.1);
+        // a single +15% bonus on a max base score loses well under 1%
+        let single_bonus_gain = NORMALIZATION_SCALE * HIGHLY_TRUSTED_PERCENT_BONUS / 100.0;
+        assert!(
+            (saturate_highly_trusted_bonus(single_bonus_gain) - single_bonus_gain).abs()
+                < single_bonus_gain * 0.01
+        );
+    }
+
+    #[test]
+    fn saturation_matches_tanh_form() {
+        for x in [0.5, 1.0, 3.0, 5.0, 8.0, 20.0, 60.0] {
+            let expected =
+                HIGHLY_TRUSTED_BONUS_SATURATION * (x / HIGHLY_TRUSTED_BONUS_SATURATION).tanh();
+            assert_f64_near!(saturate_highly_trusted_bonus(x), &expected);
+        }
+    }
+
+    #[test]
+    fn saturation_caps_runaway_gains() {
+        // the compounding highly-trusted bonus can otherwise produce huge scores for a single
+        // user; any gain far past the cap must land on the cap instead of dwarfing every other neuron
+        const K: f64 = HIGHLY_TRUSTED_BONUS_SATURATION;
+        assert_f64_near!(saturate_highly_trusted_bonus(K * 10.0), &K);
+        assert_f64_near!(saturate_highly_trusted_bonus(K * 100.0), &K);
+        assert!(saturate_highly_trusted_bonus(K * 3.0) < K);
+        assert!(saturate_highly_trusted_bonus(K * 3.0) > K * 0.99);
+    }
+
+    #[test]
+    fn saturation_is_monotonic() {
+        // up to 5 x the cap; far beyond it f64 rounds the curve to the cap itself
+        let mut prev = saturate_highly_trusted_bonus(0.0);
+        let mut x = 0.25;
+        while x <= 5.0 * HIGHLY_TRUSTED_BONUS_SATURATION {
+            let cur = saturate_highly_trusted_bonus(x);
+            assert!(cur > prev, "expected increasing at x={x}: {cur} !> {prev}");
+            prev = cur;
+            x += 0.25;
+        }
+    }
+
+    #[test]
+    fn saturation_applies_only_to_the_bonus_gain_not_the_base() {
+        let base: HashMap<String, f64> = HashMap::from([
+            ("A".to_string(), 2.0),
+            ("B".to_string(), 3.0),
+            ("C".to_string(), 1.0),
+        ]);
+        // A gained a runaway +100 from stacked bonuses, B gained a single +15%, C got nothing
+        let with_bonus: HashMap<String, f64> = HashMap::from([
+            ("A".to_string(), 102.0),
+            ("B".to_string(), 3.45),
+            ("C".to_string(), 1.0),
+        ]);
+
+        let result = TrustGraphNeuron::handle_highly_trusted_bonus_saturation(&base, with_bonus);
+
+        // base is preserved untouched, only the gain is squashed
+        assert_f64_near!(result["A"], 2.0 + HIGHLY_TRUSTED_BONUS_SATURATION);
+        assert!(result["A"] <= 2.0 + HIGHLY_TRUSTED_BONUS_SATURATION);
+        // 0.45 gain -> 5 * tanh(0.09) = 0.4488
+        assert_f64_near!(result["B"], 3.0 + 5.0 * (0.45f64 / 5.0).tanh());
+        assert_eq!(result["C"], 1.0);
+    }
+
+    #[test]
+    fn calculate_result_bonus_gain_never_exceeds_saturation() {
+        // 40 users all trust `hub`, and hub trusts one of them back
+        let mut trusted_for_user: HashMap<String, Vec<String>> = HashMap::new();
+        for i in 0..40 {
+            trusted_for_user.insert(format!("t{i}"), vec!["hub".to_string()]);
+        }
+        trusted_for_user.insert("hub".to_string(), vec!["t0".to_string()]);
+        let neuron = TrustGraphNeuron::from_data(trusted_for_user);
+        let mut users: Vec<String> = (0..40).map(|i| format!("t{i}")).collect();
+        users.push("hub".to_string());
+
+        let base = neuron.handle_page_rank(&users);
+        let result = neuron.calculate_result(&users);
+        for (user, score) in &result {
+            // base + saturated gain, then at most +10% filled-trust-list bonus on top
+            let max_allowed = (base[user] + HIGHLY_TRUSTED_BONUS_SATURATION)
+                * (1.0 + FILLED_TRUST_LIST_PERCENT_BONUS / 100.0);
+            assert!(
+                *score <= max_allowed,
+                "{user} score {score} exceeds {max_allowed}"
+            );
+            assert!(*score >= 0.0, "{user} score {score} is negative");
+        }
+    }
+
+    #[test]
+    fn stacked_bonuses_stay_below_base_plus_saturation() {
+        // 30 highly trusted users (equal top scores) all trust `target`: 1.15^30 compounding
+        // would multiply the score by 66
+        let mut trust_map: HashMap<String, f64> = HashMap::new();
+        let mut lists: HashMap<String, Vec<String>> = HashMap::new();
+        for i in 0..30 {
+            trust_map.insert(format!("top{i}"), 3.0);
+            lists.insert(format!("top{i}"), vec!["target".to_string()]);
+        }
+        trust_map.insert("target".to_string(), 2.0);
+        let neuron = TrustGraphNeuron::from_data(lists);
+
+        let with_bonus = neuron.handle_highly_trusted_bonus(trust_map.clone(), 10, 15.0);
+        assert!(with_bonus["target"] > 100.0);
+        let result =
+            TrustGraphNeuron::handle_highly_trusted_bonus_saturation(&trust_map, with_bonus);
+        assert_f64_near!(result["target"], 2.0 + HIGHLY_TRUSTED_BONUS_SATURATION);
+        assert_eq!(result["top0"], 3.0);
     }
 
     fn input(users: &[&str], lists: &[(&str, &[&str])]) -> Input {
@@ -442,12 +640,7 @@ mod tests {
 
     #[test]
     fn example_inputs_are_valid() {
-        for (json, users) in [
-            (
-                include_str!("../../../data/example_trust_graph.json"),
-                40,
-            ),
-        ] {
+        for (json, users) in [(include_str!("../../../data/example_trust_graph.json"), 40)] {
             let input: Input = serde_json::from_str(json).unwrap();
             let output = calculate(33, input).unwrap();
             assert_eq!(output.scores.len(), users);
