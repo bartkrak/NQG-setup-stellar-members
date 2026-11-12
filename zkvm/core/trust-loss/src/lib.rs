@@ -88,16 +88,35 @@ mod tests {
         serde_json::from_str(include_str!("../../../data/example_trust_loss.json")).unwrap()
     }
 
+    /// Penalty of a user whose NQG is `nqg` when the untrusting users' NQG sums to `sum`.
+    fn loss(sum: f64, nqg: f64) -> f64 {
+        -nqg * math::generalised_logistic_function(0.0, 100.0, 1.0, 1.0, 0.2, 1.0, 30.0, sum)
+            / 100.0
+    }
+
     #[test]
     fn example_input_keeps_round_and_expected_scores() {
         let output = calculate(2, fixture()).unwrap();
         assert_eq!(output.current_round, 2);
         assert_eq!(output.scores.len(), 5);
-        assert_eq!(output.scores["4"], -10.0);
+        // users 1 (10), 2 (15) and 3 (25) removed user 4 (20): 98.2% of 20
+        let expected = loss(50.0, 20.0);
+        assert!(
+            (expected + 19.640_275_800_758_17).abs() < 1e-9,
+            "{expected}"
+        );
+        assert_eq!(output.scores["4"], expected);
         assert!(output
             .scores
             .iter()
-            .all(|(id, score)| *score == if id == "4" { -10.0 } else { 0.0 }));
+            .all(|(id, score)| *score == if id == "4" { expected } else { 0.0 }));
+    }
+
+    #[test]
+    fn the_curve_removes_half_at_a_sum_of_30() {
+        let mut input = fixture();
+        input.neurons_results_sum.insert("3".to_string(), 5.0);
+        assert_eq!(calculate(2, input).unwrap().scores["4"], -10.0);
     }
 
     #[test]
@@ -107,10 +126,7 @@ mod tests {
         let output = calculate(2, input).unwrap();
         // The repeated user contributes twice to the reference's Vec-based sum,
         // while the threshold still requires three distinct users.
-        let expected = -20.0
-            * math::generalised_logistic_function(0.0, 100.0, 1.0, 1.0, 0.2, 1.0, 50.0, 60.0)
-            / 100.0;
-        assert_eq!(output.scores["4"], expected);
+        assert_eq!(output.scores["4"], loss(60.0, 20.0));
     }
 
     #[test]
@@ -137,7 +153,7 @@ mod tests {
     fn supplied_negative_sums_follow_the_reference_arithmetic() {
         let mut input = fixture();
         input.neurons_results_sum.insert("4".to_string(), -20.0);
-        assert_eq!(calculate(2, input).unwrap().scores["4"], 10.0);
+        assert_eq!(calculate(2, input).unwrap().scores["4"], loss(50.0, -20.0));
     }
 
     #[test]

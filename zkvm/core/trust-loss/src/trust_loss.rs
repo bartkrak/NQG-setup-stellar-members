@@ -8,6 +8,22 @@ use std::collections::{HashMap, HashSet};
 
 const HOW_DEEP: u32 = 1;
 const MIN_UNTRUSTING_USERS: usize = 3;
+// Logistic curve mapping the NQG sum of the untrusting users to the percentage of NQG removed.
+pub(crate) const LOSS_CURVE_B: f64 = 0.2;
+pub(crate) const LOSS_CURVE_X_OFF: f64 = 30.0;
+
+pub(crate) fn percentage_of_nqg_to_remove(untrusting_nqg_sum: f64) -> f64 {
+    generalised_logistic_function(
+        0.0,
+        100.0,
+        1.0,
+        1.0,
+        LOSS_CURVE_B,
+        1.0,
+        LOSS_CURVE_X_OFF,
+        untrusting_nqg_sum,
+    )
+}
 #[derive(Clone, Debug)]
 pub struct TrustLossNeuron {
     round: u32,
@@ -97,8 +113,7 @@ impl TrustLossNeuron {
 
         // pass those sums through logistic curve
         for (affected_user, amount) in untrusted_by_nqg_amount {
-            let percentage_of_nqg_to_remove =
-                generalised_logistic_function(0.0, 100.0, 1.0, 1.0, 0.2, 1.0, 50.0, amount);
+            let percentage_of_nqg_to_remove = percentage_of_nqg_to_remove(amount);
             if let Some(value) = result.get_mut(&affected_user) {
                 *value = -self.neurons_results_sum.get(&affected_user).unwrap()
                     * percentage_of_nqg_to_remove
@@ -150,8 +165,9 @@ mod tests {
     }
 
     fn expected_loss(untrusting_nqg_sum: f64, affected_user_nqg: f64) -> f64 {
+        // spelled out on purpose: the test pins the curve parameters
         let pct =
-            generalised_logistic_function(0.0, 100.0, 1.0, 1.0, 0.2, 1.0, 50.0, untrusting_nqg_sum);
+            generalised_logistic_function(0.0, 100.0, 1.0, 1.0, 0.2, 1.0, 30.0, untrusting_nqg_sum);
         -affected_user_nqg * pct / 100.0
     }
 
